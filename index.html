@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Jagoan Kotak</title>
+  <meta name="description" content="Game petualangan 3D dunia kotak yang dimainkan dengan gerakan badan: jalan di tempat untuk maju, toleh kepala untuk belok, tinju untuk melawan monster kotak. Bikin anak aktif bergerak!" />
+  <meta name="theme-color" content="#6cc04a" />
+  <meta property="og:title" content="Jagoan Kotak — main game sambil bergerak" />
+  <meta property="og:description" content="Jalan di tempat, toleh, tinju, lompat di depan webcam. Gratis, langsung di browser." />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="hurt"></div>
+  <div id="reticle" hidden></div>
+
+  <!-- kamera -->
+  <div id="cam" hidden>
+    <video id="video" playsinline muted></video>
+    <canvas id="pose"></canvas>
+    <div id="cam-status">kamera mati</div>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud" hidden>
+    <div class="row">
+      <div class="pill" id="hearts" aria-label="Nyawa"></div>
+      <div class="pill wave">👾 <small>gel.</small> <span id="wave">–</span></div>
+      <div class="pill">💎 <span id="gems">0</span></div>
+      <div class="pill steps">👣 <span id="steps">0</span></div>
+      <div class="pill foes" title="Monster tersisa">⚔️ <span id="foes">–</span></div>
+      <div class="spacer"></div>
+      <button id="btn-mute" class="round" aria-label="Efek suara" title="Efek suara">🔊</button>
+      <button id="btn-music" class="round" aria-label="Musik" title="Musik">🎵</button>
+      <button id="btn-pause" class="round" aria-label="Jeda" title="Jeda (P)">⏸️</button>
+    </div>
+    <div class="row second">
+      <div id="energy" title="Energi jurus — terisi saat kamu melangkah & memukul"><i id="energy-fill"></i><span>⚡ ENERGI</span></div>
+      <div class="spacer"></div>
+      <div class="pill gesture" id="gesture">—</div>
+    </div>
+  </div>
+  <div id="prompt" hidden><div id="prompt-text"></div><button id="prompt-skip">Lewati ⏭</button></div>
+  <div id="toast" aria-live="polite"></div>
+
+  <!-- kontrol sentuh (tanpa kamera) -->
+  <div id="touch" hidden>
+    <div id="stick"><div id="knob"></div><span>maju · belok</span></div>
+    <div class="btns">
+      <button id="t-look">☁️<small>lihat atas</small></button>
+      <button id="t-crouch">🙇<small>jongkok</small></button>
+      <button id="t-block">🛡️<small>perisai</small></button>
+      <button id="t-super">⭐<small>jurus</small></button>
+      <button id="t-jump">🦘<small>lompat</small></button>
+      <button id="t-punch" class="big">👊<small>tinju</small></button>
+    </div>
+  </div>
+
+  <!-- layar awal: menu di kiri, jagoan 3D di kanan (di HP: jagoan di atas, menu di bawah) -->
+  <section id="start" class="menu">
+    <div class="logo top" aria-hidden="true"><span class="l1">JAGOAN</span><span class="l2">KOTAK</span></div>
+    <div class="menu-panel" id="menu-main">
+      <div class="logo in" aria-label="Jagoan Kotak"><span class="l1">JAGOAN</span><span class="l2">KOTAK</span></div>
+      <p class="tag">Kalahkan monster kotak dengan <b>gerakan badanmu</b>. Makin banyak bergerak, makin kuat jurusmu!</p>
+      <button class="btn big play" id="btn-camera"><span class="ico">▶</span><span class="txt">MAIN<small>pakai gerakan badan 📷</small></span></button>
+      <button class="btn soft" id="btn-keys">⌨️ Main tanpa kamera</button>
+      <div class="chips">
+        <button class="chip" id="btn-howto">❓ Cara main</button>
+        <button class="chip" id="btn-outfit">👕 Ganti baju</button>
+        <button class="chip sq" id="m-mute" aria-label="Efek suara" title="Efek suara">🔊</button>
+        <button class="chip sq" id="m-music" aria-label="Musik" title="Musik">🎵</button>
+      </div>
+      <div class="records" aria-label="Catatanmu">
+        <div><b id="rec-wave">0</b><small>rekor gelombang</small></div>
+        <div><b id="rec-steps">0</b><small>total langkah</small></div>
+        <div><b id="rec-kills">0</b><small>monster kalah</small></div>
+      </div>
+      <p class="fine">Gambar kamera hanya diproses di perangkat ini, tidak dikirim ke mana pun.</p>
+    </div>
+    <div class="menu-panel outfit-panel" id="outfits" hidden>
+      <h2>Pilih bajumu 👕</h2>
+      <p class="tag">Jagoanmu langsung berganti baju.</p>
+      <div class="swatches" id="swatches"></div>
+      <button class="btn big" id="outfit-done">✔ Selesai</button>
+    </div>
+  </section>
+
+  <!-- cara main -->
+  <section id="howto" class="overlay" hidden>
+    <div class="card">
+      <h2>Cara main 🕹️</h2>
+      <p class="lead">Berdiri ±2 meter dari kamera sampai <b>badan terlihat dari kepala sampai lutut</b>.</p>
+      <ul class="moves" aria-label="Gerakan">
+        <li><i>👣</i><b>Jalan di tempat</b><span>maju · cepat = lari</span></li>
+        <li><i>↔️</i><b>Toleh kepala</b><span>belok kiri / kanan</span></li>
+        <li><i>☁️</i><b>Dongak</b><span>lihat & bidik ke atas</span></li>
+        <li><i>👊</i><b>Tinju ke depan</b><span>pukulan angin</span></li>
+        <li><i>🛡️</i><b>Tangan di depan wajah</b><span>perisai</span></li>
+        <li><i>🦘</i><b>Lompat</b><span>lompat sungguhan</span></li>
+        <li><i>🙇</i><b>Jongkok</b><span>hindari kelelawar</span></li>
+        <li><i>🙌</i><b>Kedua tangan ke atas</b><span>jurus saat energi penuh</span></li>
+      </ul>
+      <div class="tips">
+        <p>⚡ <b>Energi jurus</b> terisi dari langkah kaki, pukulan, dan tangkisan.</p>
+        <p>👾 Monster yang <b>gemetar</b> sedang bersiap menyerang. Tangkis atau menghindar!</p>
+        <p>⌨️ Keyboard: W jalan · Shift lari · A/D belok · Q dongak · J/K tinju · L perisai · Spasi lompat · C jongkok · U jurus</p>
+      </div>
+      <button class="btn big" id="howto-close">Siap! 💪</button>
+    </div>
+  </section>
+
+  <!-- kalibrasi -->
+  <section id="calib" class="overlay clear" hidden>
+    <div class="card small">
+      <h2>Berdiri tegak ya!</h2>
+      <p class="lead" id="calib-hint">Menyalakan kamera…</p>
+      <div class="count" id="calib-count">3</div>
+      <div class="bar"><i id="calib-bar"></i></div>
+    </div>
+  </section>
+
+  <!-- jeda -->
+  <section id="pause" class="overlay" hidden>
+    <div class="card small">
+      <h2>Istirahat dulu 🧃</h2>
+      <p class="lead" id="pause-msg" hidden>Kamera tidak melihatmu. Berdiri lagi di depan kamera, lalu lanjut.</p>
+      <button class="btn big" id="btn-resume">▶ Lanjut</button>
+      <button class="btn soft" id="btn-home">Menu utama</button>
+    </div>
+  </section>
+
+  <!-- selesai -->
+  <section id="over" class="overlay" hidden>
+    <div class="card">
+      <div class="badge" id="over-badge" hidden>🏆 REKOR BARU!</div>
+      <div class="stars" id="stars"><i>★</i><i>★</i><i>★</i></div>
+      <h2 id="over-title">Bagus sekali!</h2>
+      <p class="lead">Lihat seberapa aktif kamu tadi:</p>
+      <ul id="summary"></ul>
+      <button class="btn big" id="btn-again">🔄 Main lagi</button>
+      <div class="two">
+        <button class="btn soft" id="btn-tutorial">🎓 Latihan gerakan</button>
+        <button class="btn soft" id="btn-home2">🏠 Menu utama</button>
+      </div>
+    </div>
+  </section>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
