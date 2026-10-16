@@ -15,6 +15,7 @@ export function mat(color, extra = {}) {
 }
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const easeOut = (t) => 1 - (1 - t) * (1 - t);
 const easeInOut = (t) => (t < .5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
 export const easeOutBack = (t) => { const c = 1.9; return 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2; };
@@ -32,6 +33,8 @@ function block(w, h, d, material, y = 0) {
   m.scale.set(w, h, d); m.position.y = y;
   return m;
 }
+/** Tambahkan anak lalu kembalikan ANAK-nya (Object3D.add mengembalikan induk, jadi `.add(x).position` salah sasaran). */
+const put = (parent, child) => (parent.add(child), child);
 
 /**
  * Manusia kotak (proporsi ala Minecraft, tinggi 1.8). Kepala polos tanpa mata/mulut:
@@ -50,8 +53,11 @@ export function makeHumanoid({ skin, shirt, pants, hair, shoes = 0x3a3a46, hat =
   const headPivot = new THREE.Group(); headPivot.position.y = .72; upper.add(headPivot);
   headPivot.add(block(.5, .5, .5, mats.skin, .25));
   if (mats.hair) {
-    headPivot.add(block(.54, .14, .54, mats.hair, .5));                 // atas
-    headPivot.add(block(.54, .38, .1, mats.hair, .33)).position.z = .23; // belakang
+    // rambut menutup atas, belakang, dan sisi belakang: dari belakang (sudut pandang pemain) yang terlihat
+    // rambut, jadi jelas kepala menghadap ke depan. Bagian depan tetap kulit polos tanpa wajah.
+    headPivot.add(block(.54, .14, .54, mats.hair, .5));                      // atas
+    put(headPivot, block(.54, .4, .1, mats.hair, .3)).position.z = .23;       // belakang
+    for (const sx of [-1, 1]) put(headPivot, block(.06, .3, .3, mats.hair, .35)).position.set(sx * .26, .35, .1); // sisi
   }
   if (hat) headPivot.add(block(.6, .1, .6, M(hat), .56));
 
@@ -59,9 +65,17 @@ export function makeHumanoid({ skin, shirt, pants, hair, shoes = 0x3a3a46, hat =
   const armR = limb(.24, .72, .24, mats.shirt); armR.position.set(.37, .69, 0); upper.add(armR);
   for (const a of [armL, armR]) a.add(block(.25, .2, .25, mats.skin, -.62)); // tangan
 
-  const legL = limb(.25, .75, .25, mats.pants); legL.position.set(-.13, .75, 0); body.add(legL);
-  const legR = limb(.25, .75, .25, mats.pants); legR.position.set(.13, .75, 0); body.add(legR);
-  for (const l of [legL, legR]) l.add(block(.27, .14, .29, mats.shoes, -.68));
+  // kaki bersendi: pinggul (paha) → lutut (betis) → pergelangan (sepatu), supaya jongkok/angkat lutut wajar
+  const leg = (x) => {
+    const hip = limb(.25, .38, .25, mats.pants); hip.position.set(x, .75, 0); body.add(hip);
+    const knee = put(hip, limb(.24, .37, .24, mats.pants)); knee.position.y = -.375;
+    knee.add(block(.245, .2, .245, mats.pants, 0));                       // isi celah sendi lutut saat menekuk
+    const foot = put(knee, new THREE.Group()); foot.position.y = -.31;
+    put(foot, block(.27, .14, .29, mats.shoes, 0)).position.z = -.02;
+    hip.knee = knee; hip.foot = foot;
+    return hip;
+  };
+  const legL = leg(-.13), legR = leg(.13);
 
   root.scale.setScalar(scale);
   return { root, body, upper, headPivot, armL, armR, legL, legR, torso, mats, baseScale: scale,
@@ -102,17 +116,24 @@ export function animateHumanoid(r, s, dt) {
   const slamP = s.slam > 0 ? 1 - s.slam / .6 : -1;
   const slamUp = slamP >= 0 && slamP < .35, slamDown = slamP >= .35;
 
-  // ---- kaki
-  let lL, lR;
-  if (air) { lL = .8; lR = -.35; }
-  else if (s.crouch || slamDown) { lL = lR = 1.0; }
-  else if (knees) { lL = s.kneeL * 1.5 + sw * .3; lR = s.kneeR * 1.5 - sw * .3; }
-  else { lL = sw; lR = -sw; }
+  // ---- kaki: pinggul (x+ = paha ke depan), lutut (x- = betis menekuk ke belakang), sepatu dijaga datar
+  let lL, lR, nL = 0, nR = 0;
+  const cyc = Math.cos(a.phase);
+  if (air) { lL = .95; nL = -1.3; lR = -.2; nR = -.75; }                                  // lutut ditekuk di udara
+  else if (s.crouch || slamDown) { lL = lR = 1.0; nL = nR = -2.0; }                       // jongkok: paha maju, betis ke belakang, telapak tetap di bawah badan
+  else if (knees) { lL = s.kneeL * 1.5 + sw * .3; lR = s.kneeR * 1.5 - sw * .3; nL = -s.kneeL * 1.9; nR = -s.kneeR * 1.9; } // angkat lutut
+  else { lL = sw; lR = -sw; nL = -Math.max(0, cyc) * a.amp * 1.3; nR = -Math.max(0, -cyc) * a.amp * 1.3; } // lutut menekuk saat kaki diayun ke depan
+  const landB = a.land > 0 ? Math.sin(a.land / .2 * Math.PI) : 0;                         // pegas mendarat: lutut sedikit menekuk
+  lL += landB * .3; lR += landB * .3; nL -= landB * .6; nR -= landB * .6;
   to(r.legL, 'x', lL, kq); to(r.legR, 'x', lR, kq);
+  to(r.legL.knee, 'x', nL, kq); to(r.legR.knee, 'x', nR, kq);
+  const flat = air ? .5 : 1;
+  r.legL.foot.rotation.x = -(r.legL.rotation.x + r.legL.knee.rotation.x) * flat;
+  r.legR.foot.rotation.x = -(r.legR.rotation.x + r.legR.knee.rotation.x) * flat;
   to(r.legL, 'z', air ? -.12 : 0); to(r.legR, 'z', air ? .12 : 0);
 
   // ---- badan: jongkok, langkah memantul, napas, pegas mendarat
-  const crouchY = s.crouch ? -.34 : slamDown ? -.3 : 0;
+  const crouchY = s.crouch || slamDown ? -.32 : 0;           // pas dengan sudut paha 1.0 & lutut -2.0: telapak tetap di tanah
   a.cy += (crouchY - a.cy) * kq;
   const bob = air || s.crouch ? 0 : Math.abs(Math.cos(a.phase)) * .075 * a.amp;
   const breath = Math.sin(a.t * 2.2) * .012 * (1 - Math.min(1, a.amp * 2));
@@ -146,7 +167,7 @@ export function animateHumanoid(r, s, dt) {
     else if (air) { x = .35; z = sx * .85; }
     else if (other > 0) { x = .75; z = -sx * .28; }                                        // tangan lain menjaga
     else if (s.crouch) { x = .95; z = -sx * .1; }
-    else { x = -legSw * .95; z = sx * (.05 + Math.sin(a.t * 2.2) * .02); }               // berayun berlawanan dengan kaki
+    else { x = -clamp(legSw, -.85, .85) * .95; z = sx * (.05 + Math.sin(a.t * 2.2) * .02); }               // berayun berlawanan dengan kaki
     to(o, 'x', x, kq); to(o, 'z', z, kq);
   };
   arm(r.armL, -1, eL, eR, lL);

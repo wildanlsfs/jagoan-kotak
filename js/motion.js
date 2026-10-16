@@ -1,6 +1,7 @@
 // Pembaca gerakan tubuh dari landmark MediaPipe Pose.
 //   jalan di tempat (angkat lutut bergantian) -> jalan; cepat -> lari
-//   toleh kiri/kanan -> belok;  dongak/tunduk -> lihat atas/bawah
+//   toleh kiri/kanan ATAU miringkan badan kiri/kanan -> belok;  dongak/tunduk -> lihat atas/bawah
+//   (lutut tidak terlihat? langkah dibaca dari goyangan naik-turun badan)
 //   dorong tangan ke depan cepat -> tinju (kiri/kanan)
 //   kedua tangan di depan wajah -> perisai;  kedua tangan ke atas -> jurus super
 //   lompat sungguhan -> lompat;  jongkok -> merunduk
@@ -13,7 +14,7 @@ export function createMotion() {
   const st = {
     ok: false, others: 0, kneesVisible: true,
     // hasil
-    steps: 0, stepRate: 0, moving: false, run: false, kneeL: 0, kneeR: 0,
+    steps: 0, stepRate: 0, moving: false, run: false, kneeL: 0, kneeR: 0, bobSteps: false,
     turn: 0, look: 0, block: false, crouch: false, raise: false, raiseHeld: 0,
     // dasar kalibrasi
     base: null,
@@ -26,6 +27,8 @@ export function createMotion() {
   const lastPunch = { L: -1e9, R: -1e9 };
   let lastT = 0, stepTimes = [], lastStepSide = '', jumpArmed = true, crouchSince = 0, track = null, lostSince = 0;
   let calib = [];
+  let leanS = 0;                                // kemiringan badan yang dihaluskan
+  const bob = { fast: null, slow: 0, up: false }; // goyangan badan untuk langkah tanpa lutut
 
   const aspectOf = (o) => o.aspect || 4 / 3;
 
@@ -42,6 +45,7 @@ export function createMotion() {
       T, sx, sy, hx, hy, ex, ey, earD,
       sw: Math.abs(P(L.shL).x - P(L.shR).x) * aspect,
       yaw: (P(L.nose).x - ex) * aspect / earD,        // + = menoleh ke KIRI pemain (gambar tidak dicermin)
+      lean: (sx - hx) * aspect / T,                   // + = bahu bergeser ke KIRI pemain (badan miring ke kiri)
       pitch: (ey - P(L.nose).y) / earD,               // + = mendongak
       kL: (P(L.kneeL).y - P(L.hipL).y) / T,           // jarak vertikal lutut di bawah pinggul
       kR: (P(L.kneeR).y - P(L.hipR).y) / T,
@@ -88,7 +92,7 @@ export function createMotion() {
     const dt = lastT ? clamp((now - lastT) / 1000, 1 / 120, .2) : 1 / 30; lastT = now;
 
     if (opts.calibrating) { calib.push(m); return ev; }
-    const B = st.base || { T: m.T, hy: m.hy, kL: .95, kR: .95, yaw: 0, pitch: 0 };
+    const B = st.base || { T: m.T, hy: m.hy, kL: .95, kR: .95, yaw: 0, pitch: 0, lean: 0 };
     const T = m.T;
 
     // 1) langkah: lutut naik (jarak lutut-pinggul mengecil) bergantian
@@ -98,22 +102,40 @@ export function createMotion() {
     for (const side of ['L', 'R']) {
       const v = side === 'L' ? st.kneeL : st.kneeR, other = side === 'L' ? st.kneeR : st.kneeL;
       // dua lutut naik bersamaan = jongkok/lompat, bukan langkah
-      if (kneeArm[side] && v > .32 && other < .22) {
+      if (kneeArm[side] && v > .26 && other < .22) {
         kneeArm[side] = false;
         // lutut yang sama berturut-turut tetap dihitung, tapi minimal 0.18 dtk antarlangkah
         if (now - (stepTimes[stepTimes.length - 1] || 0) > 180) { stepTimes.push(now); st.steps++; lastStepSide = side; ev.step = true; }
-      } else if (!kneeArm[side] && v < .14) kneeArm[side] = true;
+      } else if (!kneeArm[side] && v < .12) kneeArm[side] = true;
     }
+    // 1b) cadangan saat lutut tidak terlihat (HP terlalu dekat): tiap langkah di tempat membuat badan
+    //     naik-turun sedikit. Ambil goyangan cepat bahu+pinggul dikurangi rata-rata lambatnya.
+    st.bobSteps = !m.kneesVisible;
+    const yMid = (m.sy + m.hy) / 2 / T;
+    if (bob.fast === null) { bob.fast = bob.slow = yMid; }
+    bob.fast += (yMid - bob.fast) * Math.min(1, dt * 14);
+    bob.slow += (yMid - bob.slow) * Math.min(1, dt * 1.6);
+    const hp = bob.fast - bob.slow;                                   // + = badan turun
+    if (!m.kneesVisible) {
+      if (!bob.up && hp < -.02) bob.up = true;                          // badan naik (lutut diangkat)…
+      else if (bob.up && hp > .012) {                                  // …lalu turun lagi = satu langkah
+        bob.up = false;
+        if (now - (stepTimes[stepTimes.length - 1] || 0) > 220) { stepTimes.push(now); st.steps++; ev.step = true; }
+      }
+    } else bob.up = false;
     stepTimes = stepTimes.filter((t) => now - t < 2000);
     const recent = stepTimes.filter((t) => now - t < 1500).length;
     st.stepRate = recent / 1.5;
-    st.moving = stepTimes.length > 0 && now - stepTimes[stepTimes.length - 1] < 800;
-    st.run = st.moving && st.stepRate >= 2.6;
+    st.moving = stepTimes.length > 0 && now - stepTimes[stepTimes.length - 1] < 1000;
+    st.run = st.moving && st.stepRate >= 2.4;
 
     // 2) kepala: belok (laju) dan lihat atas/bawah (sudut)
+    //    belok bisa dengan menoleh ATAU memiringkan badan (mata tetap ke layar); hasilnya dijumlah
+    const ramp = (v, dz, full) => (Math.abs(v) < dz ? 0 : clamp((Math.abs(v) - dz) / (full - dz), 0, 1) * Math.sign(v));
     const yaw = m.yaw - B.yaw;
-    const dz = .1, full = .42;
-    st.turn = Math.abs(yaw) < dz ? 0 : clamp((Math.abs(yaw) - dz) / (full - dz), 0, 1) * Math.sign(yaw);
+    leanS += (m.lean - (B.lean || 0) - leanS) * Math.min(1, dt * 6);   // haluskan goyangan badan saat melangkah
+    st.lean = leanS;
+    st.turn = clamp(ramp(yaw, .1, .36) + ramp(leanS, .12, .3), -1, 1);
     const pitch = m.pitch - B.pitch;
     const target = Math.abs(pitch) < .07 ? 0 : clamp((pitch - Math.sign(pitch) * .07) / .32, -.6, 1);
     st.look += (target - st.look) * Math.min(1, dt * 8);
@@ -138,7 +160,7 @@ export function createMotion() {
         const reach = sw.z - ww.z;                          // + = tangan di depan bahu (lebih dekat ke kamera)
         const vel = (reach - prevReach[side]) / dt;
         prevReach[side] = reach;
-        if (arm[side] && reach > .3 && vel > 1.3) punched = true;
+        if (arm[side] && reach > .24 && vel > 1.0) punched = true;
         if (reach < .16) arm[side] = true;
       }
       // b) cadangan 2D: hentakan cepat menjauh dari bahu setinggi dada (pukulan samping / tinju miring)
@@ -147,8 +169,8 @@ export function createMotion() {
         const speed = Math.hypot(vx, vy);
         const dx = (w.x - s.x) * aspect / T, dy = (w.y - s.y) / T;
         const away = (vx * dx + vy * dy) / (Math.hypot(dx, dy) || 1);
-        const chest = w.y > nose.y - T * .2 && w.y < m.hy;
-        if (arm[side] && chest && speed > 3.2 && away > 2.2 && Math.hypot(dx, dy) > .55) punched = true;
+        const chest = w.y > nose.y - T * .25 && w.y < m.sy + T * .65;
+        if (arm[side] && chest && speed > 2.6 && away > 1.7 && Math.hypot(dx, dy) > .5) punched = true;
         if (!wl && Math.hypot(dx, dy) < .45) arm[side] = true;
         if (!wl && speed < .6) arm[side] = true;
       }
@@ -179,7 +201,10 @@ export function createMotion() {
   function finishCalibration() {
     if (calib.length < 8) return false;
     const avg = (k) => calib.reduce((s, m) => s + m[k], 0) / calib.length;
-    st.base = { T: avg('T'), hy: avg('hy'), kL: Math.max(.5, avg('kL')), kR: Math.max(.5, avg('kR')), yaw: avg('yaw'), pitch: avg('pitch') };
+    const kv = calib.filter((m) => m.kneesVisible);                       // lutut boleh tidak terlihat (mode goyangan badan)
+    const kavg = (k) => (kv.length ? kv.reduce((s, m) => s + m[k], 0) / kv.length : .95);
+    st.base = { T: avg('T'), hy: avg('hy'), kL: Math.max(.5, kavg('kL')), kR: Math.max(.5, kavg('kR')), yaw: avg('yaw'), pitch: avg('pitch'), lean: avg('lean') };
+    leanS = 0; bob.fast = null;
     stepTimes = []; st.steps = 0; jumpArmed = true;
     return true;
   }

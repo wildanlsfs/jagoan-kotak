@@ -146,8 +146,7 @@ function handlePose(all, world, now) {
   if (!s.ok) {
     ui.camStatus.textContent = motion.lostSince && all.length ? 'Itu bukan kamu 👀' : 'Kamu tidak terlihat 👀';
     if (state.mode === 'play' && motion.lostSince && now - motion.lostSince > 2000) { togglePause(); ui.pauseMsg.hidden = false; }
-  } else if (!s.kneesVisible) ui.camStatus.textContent = 'Mundur sedikit — lutut harus terlihat';
-  else ui.camStatus.textContent = s.block ? 'perisai 🛡️' : s.crouch ? 'jongkok 🙇' : s.run ? 'lari! 🏃' : s.moving ? 'jalan 🚶' : s.raise ? 'tangan ke atas 🙌' : 'siap 🙂';
+  } else ui.camStatus.textContent = !s.kneesVisible && !s.moving ? 'Lutut tak terlihat — melangkah yang mantap ya' : s.block ? 'perisai 🛡️' : s.crouch ? 'jongkok 🙇' : s.run ? 'lari! 🏃' : s.moving ? 'jalan 🚶' : s.raise ? 'tangan ke atas 🙌' : s.turn > .2 ? 'belok kiri ↩️' : s.turn < -.2 ? 'belok kanan ↪️' : 'siap 🙂';
   return ev;
 }
 
@@ -537,19 +536,21 @@ swatches.addEventListener('click', (e) => {
 $('btn-outfit').addEventListener('click', () => { unlock(); sfx.check(); ui.menuMain.hidden = true; ui.outfits.hidden = false; });
 $('outfit-done').addEventListener('click', () => { ui.outfits.hidden = true; ui.menuMain.hidden = false; });
 
-let calibStart = 0;
+let calibStart = 0, calibSeen = 0;
 function beginCalib() {
-  state.mode = 'calib'; motion.startCalibration(); calibStart = performance.now();
+  state.mode = 'calib'; motion.startCalibration(); calibStart = performance.now(); calibSeen = 0;
   ui.over.hidden = true; ui.start.hidden = true; ui.calib.hidden = false; ui.cam.hidden = false;
 }
 function tickCalib(now) {
   const s = motion.st;
-  const good = s.ok && s.kneesVisible;
-  if (!good) calibStart = now; // hitung mundur hanya saat seluruh badan terlihat
+  // lutut sebaiknya terlihat, tapi setelah 4 dtk menunggu boleh lanjut (langkah dibaca dari goyangan badan)
+  if (!s.ok) calibSeen = 0; else calibSeen ||= now;
+  const good = s.ok && (s.kneesVisible || now - calibSeen > 4000);
+  if (!good) calibStart = now;
   const t = (now - calibStart) / 1000, n = Math.max(0, Math.ceil(3 - t));
   if (ui.calibCount.textContent !== String(n)) { ui.calibCount.textContent = n; if (good) sfx.tick(); }
   ui.calibBar.style.width = `${Math.min(100, t / 3 * 100)}%`;
-  ui.calibHint.textContent = !s.ok ? 'Berdiri di depan kamera ya.' : !s.kneesVisible ? 'Mundur sampai kepala sampai LUTUT terlihat 📏' : s.others ? 'Ada orang lain — kamera mengunci yang paling dekat 👍' : 'Mantap! Berdiri tegak & lihat ke layar 🙂';
+  ui.calibHint.textContent = !s.ok ? 'Berdiri di depan kamera ya.' : !s.kneesVisible ? (good ? 'Lutut tak terlihat — tidak apa-apa, melangkahlah yang mantap 👍' : 'Mundur sampai kepala sampai LUTUT terlihat 📏') : s.others ? 'Ada orang lain — kamera mengunci yang paling dekat 👍' : 'Mantap! Berdiri tegak & lihat ke layar 🙂';
   if (t >= 3) {
     if (motion.finishCalibration()) { ui.calib.hidden = true; beginGame(); }
     else { motion.startCalibration(); calibStart = now; }
@@ -579,6 +580,16 @@ function menuShowoff(dt) {
   }
   physicsY(P, dt);
 }
+// mode kamera: kalau pemain tidak sedang belok, jagoan pelan-pelan menghadap monster terdekat
+// (menoleh terus sambil melihat layar itu sulit untuk anak, jadi arah dibantu)
+function assistFacing(dt) {
+  let best = null, bd = 18;
+  for (const f of foes) { const d = Math.hypot(f.pos.x - P.pos.x, f.pos.z - P.pos.z); if (d < bd) { bd = d; best = f; } }
+  if (!best || bd < 1.2) return;
+  const want = Math.atan2(-(best.pos.x - P.pos.x), -(best.pos.z - P.pos.z));
+  const diff = Math.atan2(Math.sin(want - P.yaw), Math.cos(want - P.yaw));
+  P.yaw += clamp(diff, -1, 1) * Math.min(1.3 * dt, Math.abs(diff));
+}
 const menuFacing = () => Math.atan2(camera.position.x - P.pos.x, camera.position.z - P.pos.z);
 let last = performance.now(), frameTimes = [];
 function update(dt, now) {
@@ -588,6 +599,7 @@ function update(dt, now) {
   if (active) {
     // gerak pemain
     P.yaw += ctl.turn * (ctl.source === 'pose' ? 2.0 : 2.4) * dt;
+    if (ctl.source === 'pose' && state.mode === 'play' && Math.abs(ctl.turn) < .05) assistFacing(dt);
     const target = ctl.crouch || ctl.block ? Math.min(ctl.fwd, .5) * 2 : ctl.fwd * (ctl.run ? 6.2 : 3.3);
     P.speed += (target - P.speed) * Math.min(1, dt * 8);
     const fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw);

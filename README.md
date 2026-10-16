@@ -6,8 +6,8 @@ Game petualangan-tarung 3D bergaya dunia kotak (ala Minecraft) yang dimainkan de
 
 | Gerakan badan | Di game | Keyboard | Layar sentuh |
 |---|---|---|---|
-| Jalan di tempat (angkat lutut bergantian) | Maju; cepat = lari | W / ↑ (Shift = lari) | Stik ke atas |
-| Toleh kepala kiri / kanan | Belok | A / D, ← / → | Stik kiri / kanan |
+| Jalan di tempat (angkat lutut bergantian; kalau lutut tidak terlihat, dibaca dari goyangan naik-turun badan) | Maju; cepat = lari | W / ↑ (Shift = lari) | Stik ke atas |
+| Toleh kepala **atau** miringkan badan ke kiri / kanan | Belok (di mode kamera jagoan juga pelan-pelan menghadap monster terdekat) | A / D, ← / → | Stik kiri / kanan |
 | Dongak / tunduk | Lihat atas / bawah (membidik kelelawar) | Tahan Q / E | Tahan ☁️ |
 | Tinju ke depan (kiri / kanan) | Pukulan angin dari tangan itu | J / K atau klik kiri / kanan | 👊 |
 | Kedua tangan di depan wajah | Perisai (tangkis serangan dari depan) | Tahan L | Tahan 🛡️ |
@@ -30,6 +30,8 @@ Game petualangan-tarung 3D bergaya dunia kotak (ala Minecraft) yang dimainkan de
 ## Teknis
 
 Performa: peta bayangan dunia dibuat sekali saja (karakter memakai bayangan bulat), menu dan jeda dibatasi 30 fps, resolusi turun/naik otomatis sesuai kemampuan perangkat, shader monster dikompilasi di awal, dan geometri barang/efek dipakai ulang supaya game tidak makin berat seiring waktu.
+
+Cara membaca gerakan (`js/motion.js`): MediaPipe memberi 33 titik tubuh per frame. Semua jarak dibagi panjang badan (bahu–pinggul), jadi tidak tergantung jauh-dekatnya pemain. Kalibrasi 3 detik merekam pose tegak sebagai titik nol. Langkah = satu lutut naik sementara lutut lain tetap; belok = posisi hidung terhadap telinga dan geser bahu terhadap pinggul; tinju = pergelangan maju cepat (kedalaman 3D) atau hentakan cepat menjauh dari bahu (2D); perisai = kedua tangan di depan wajah; lompat/jongkok = pinggul naik/turun dibanding kalibrasi.
 
 Statis tanpa build: Three.js 0.160 (importmap CDN) dan MediaPipe Tasks Vision 0.10.14 (Pose Landmarker lite, 2 orang, landmark 2D + dunia). Dunia dibuat dari balok InstancedMesh dengan tekstur piksel dari kanvas, dan suara serta musik disintesis dengan Web Audio. Gambar kamera hanya diproses di perangkat.
 
