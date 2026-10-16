@@ -127,7 +127,8 @@ export function createMotion() {
     const recent = stepTimes.filter((t) => now - t < 1500).length;
     st.stepRate = recent / 1.5;
     st.moving = stepTimes.length > 0 && now - stepTimes[stepTimes.length - 1] < 1000;
-    st.run = st.moving && st.stepRate >= 2.4;
+    // jalan → lari dengan histeresis: mulai lari di ≥2.4 langkah/dtk, kembali jalan di <1.9 (tidak berkedip)
+    st.run = st.moving && st.stepRate >= (st.run ? 1.9 : 2.4);
 
     // 2) kepala: belok (laju) dan lihat atas/bawah (sudut)
     //    belok bisa dengan menoleh ATAU memiringkan badan (mata tetap ke layar); hasilnya dijumlah
@@ -137,8 +138,8 @@ export function createMotion() {
     st.lean = leanS;
     st.turn = clamp(ramp(yaw, .1, .36) + ramp(leanS, .12, .3), -1, 1);
     const pitch = m.pitch - B.pitch;
-    const target = Math.abs(pitch) < .07 ? 0 : clamp((pitch - Math.sign(pitch) * .07) / .32, -.6, 1);
-    st.look += (target - st.look) * Math.min(1, dt * 8);
+    const target = Math.abs(pitch) < .1 ? 0 : clamp((pitch - Math.sign(pitch) * .1) / .3, -.6, 1);
+    st.look += (target - st.look) * Math.min(1, dt * 4);      // pelan: getaran kepala tidak menggoyang kamera
 
     // 3) tangan
     const wrist = (side) => lm[side === 'L' ? L.wrL : L.wrR];

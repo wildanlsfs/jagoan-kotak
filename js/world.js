@@ -17,7 +17,9 @@ function pixelTex(draw) {
   const c = document.createElement('canvas'); c.width = c.height = 16;
   const g = c.getContext('2d'); draw(g);
   const t = new THREE.CanvasTexture(c);
-  t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestMipmapNearestFilter; t.colorSpace = THREE.SRGBColorSpace;
+  // piksel tajam dari dekat, tapi di kejauhan dicampur antar-mipmap + anisotropi supaya tanah tidak
+  // berkelip/bergetar saat berjalan (kelip tekstur ikut memicu pusing)
+  t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestMipmapLinearFilter; t.anisotropy = 4; t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 function speckle(g, base, cols, n = 70, x0 = 0, y0 = 0, w = 16, h = 16) {
@@ -25,7 +27,7 @@ function speckle(g, base, cols, n = 70, x0 = 0, y0 = 0, w = 16, h = 16) {
   for (let i = 0; i < n; i++) { g.fillStyle = cols[(rnd() * cols.length) | 0]; g.fillRect(x0 + ((rnd() * w) | 0), y0 + ((rnd() * h) | 0), 1, 1); }
 }
 const TEX = {
-  grassTop: pixelTex((g) => speckle(g, '#6cc04a', ['#5aab3c', '#7fd35a', '#4f9e35', '#8be066'], 110)),
+  grassTop: pixelTex((g) => speckle(g, '#6cc04a', ['#61b343', '#76c853', '#5aab3c', '#7ccd57'], 90)), // kontras lembut: aliran gambar tanah tidak terlalu kuat
   grassSide: pixelTex((g) => {
     speckle(g, '#9a6b43', ['#87593a', '#ad7a4e', '#7a4e31'], 80);
     speckle(g, '#6cc04a', ['#5aab3c', '#7fd35a'], 30, 0, 0, 16, 4);

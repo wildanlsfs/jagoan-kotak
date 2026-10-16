@@ -20,6 +20,7 @@
   <canvas id="game"></canvas>
   <div id="hurt"></div>
   <div id="reticle" hidden></div>
+  <div id="foe-arrow" aria-hidden="true"></div>
 
   <!-- kamera -->
   <div id="cam" hidden>
@@ -73,9 +74,10 @@
       <button class="btn soft" id="btn-keys">⌨️ Main tanpa kamera</button>
       <div class="chips">
         <button class="chip" id="btn-howto">❓ Cara main</button>
-        <button class="chip" id="btn-outfit">👕 Ganti baju</button>
+        <button class="chip" id="btn-outfit">👕 Lemari <span class="gem-badge">💎<span class="wallet-n">0</span></span></button>
         <button class="chip sq" id="m-mute" aria-label="Efek suara" title="Efek suara">🔊</button>
         <button class="chip sq" id="m-music" aria-label="Musik" title="Musik">🎵</button>
+        <button class="chip sq" id="m-comfort" aria-label="Anti pusing" title="Anti pusing">🌀</button>
       </div>
       <div class="records" aria-label="Catatanmu">
         <div><b id="rec-wave">0</b><small>rekor gelombang</small></div>
@@ -85,10 +87,12 @@
       <p class="fine">Gambar kamera hanya diproses di perangkat ini, tidak dikirim ke mana pun.</p>
     </div>
     <div class="menu-panel outfit-panel" id="outfits" hidden>
-      <h2>Pilih bajumu 👕</h2>
-      <p class="tag">Jagoanmu langsung berganti baju.</p>
-      <div class="swatches" id="swatches"></div>
-      <button class="btn big" id="outfit-done">✔ Selesai</button>
+      <div class="shop-head"><h2>Lemari 👕</h2><span class="wallet">💎 <b class="wallet-n">0</b></span></div>
+      <div class="tabs" id="shop-tabs" role="tablist"></div>
+      <div class="items" id="shop-items"></div>
+      <p class="shop-msg" id="shop-msg">Ketuk untuk mencoba. 💎 didapat dari monster dan dari bergerak (langkah &amp; gelombang).</p>
+      <button class="btn big buy" id="shop-buy" hidden>Beli</button>
+      <button class="btn soft" id="outfit-done">✔ Selesai</button>
     </div>
   </section>
 
@@ -99,18 +103,21 @@
       <p class="lead">Berdiri ±2 meter dari kamera sampai <b>badan terlihat dari kepala sampai lutut</b>.</p>
       <ul class="moves" aria-label="Gerakan">
         <li><i>👣</i><b>Jalan di tempat</b><span>maju · cepat = lari</span></li>
-        <li><i>↔️</i><b>Toleh kepala</b><span>belok kiri / kanan</span></li>
+        <li><i>↔️</i><b>Toleh / miringkan badan</b><span>belok kiri / kanan</span></li>
         <li><i>☁️</i><b>Dongak</b><span>lihat & bidik ke atas</span></li>
         <li><i>👊</i><b>Tinju ke depan</b><span>pukulan angin</span></li>
         <li><i>🛡️</i><b>Tangan di depan wajah</b><span>perisai</span></li>
         <li><i>🦘</i><b>Lompat</b><span>lompat sungguhan</span></li>
+        <li><i>✨</i><b>Lompat lagi di udara</b><span>lompat ganda + salto</span></li>
+        <li><i>🚀</i><b>Jongkok lalu lompat</b><span>lompat tinggi</span></li>
         <li><i>🙇</i><b>Jongkok</b><span>hindari kelelawar</span></li>
         <li><i>🙌</i><b>Kedua tangan ke atas</b><span>jurus saat energi penuh</span></li>
       </ul>
       <div class="tips">
         <p>⚡ <b>Energi jurus</b> terisi dari langkah kaki, pukulan, dan tangkisan.</p>
         <p>👾 Monster yang <b>gemetar</b> sedang bersiap menyerang. Tangkis atau menghindar!</p>
-        <p>⌨️ Keyboard: W jalan · Shift lari · A/D belok · Q dongak · J/K tinju · L perisai · Spasi lompat · C jongkok · U jurus</p>
+        <p>🌀 <b>Pusing?</b> Nyalakan tombol 🌀 (anti pusing), main di ruangan terang, layar sejajar mata ±2 m, dan istirahat tiap selesai gelombang.</p>
+        <p>⌨️ Keyboard: W jalan · Shift lari · A/D belok · Q dongak · J/K tinju · L perisai · Spasi lompat (2× di udara = ganda, tahan C dulu = tinggi) · C jongkok · U jurus</p>
       </div>
       <button class="btn big" id="howto-close">Siap! 💪</button>
     </div>
@@ -144,6 +151,7 @@
       <h2 id="over-title">Bagus sekali!</h2>
       <p class="lead">Lihat seberapa aktif kamu tadi:</p>
       <ul id="summary"></ul>
+      <p class="over-gems" id="over-gems"></p>
       <button class="btn big" id="btn-again">🔄 Main lagi</button>
       <div class="two">
         <button class="btn soft" id="btn-tutorial">🎓 Latihan gerakan</button>

@@ -28,13 +28,13 @@ function limb(w, h, d, material) {
   pivot.add(m);
   return pivot;
 }
-function block(w, h, d, material, y = 0) {
+export function block(w, h, d, material, y = 0) {
   const m = new THREE.Mesh(BOX, material);
   m.scale.set(w, h, d); m.position.y = y;
   return m;
 }
 /** Tambahkan anak lalu kembalikan ANAK-nya (Object3D.add mengembalikan induk, jadi `.add(x).position` salah sasaran). */
-const put = (parent, child) => (parent.add(child), child);
+export const put = (parent, child) => (parent.add(child), child);
 
 /**
  * Manusia kotak (proporsi ala Minecraft, tinggi 1.8). Kepala polos tanpa mata/mulut:
@@ -44,6 +44,7 @@ const put = (parent, child) => (parent.add(child), child);
 export function makeHumanoid({ skin, shirt, pants, hair, shoes = 0x3a3a46, hat = null, scale = 1, own = false }) {
   const M = (c) => (own ? new THREE.MeshLambertMaterial({ color: c }) : mat(c));
   const mats = { skin: M(skin), shirt: M(shirt), pants: M(pants), hair: hair != null ? M(hair) : null, shoes: M(shoes) };
+  mats.sleeve = own ? M(shirt) : mats.shirt;                       // lengan baju (bisa beda warna, mis. jaket)
   const root = new THREE.Group();
   const body = new THREE.Group(); root.add(body);
   const upper = new THREE.Group(); upper.position.y = .75; body.add(upper);
@@ -61,8 +62,8 @@ export function makeHumanoid({ skin, shirt, pants, hair, shoes = 0x3a3a46, hat =
   }
   if (hat) headPivot.add(block(.6, .1, .6, M(hat), .56));
 
-  const armL = limb(.24, .72, .24, mats.shirt); armL.position.set(-.37, .69, 0); upper.add(armL);
-  const armR = limb(.24, .72, .24, mats.shirt); armR.position.set(.37, .69, 0); upper.add(armR);
+  const armL = limb(.24, .72, .24, mats.sleeve); armL.position.set(-.37, .69, 0); upper.add(armL);
+  const armR = limb(.24, .72, .24, mats.sleeve); armR.position.set(.37, .69, 0); upper.add(armR);
   for (const a of [armL, armR]) a.add(block(.25, .2, .25, mats.skin, -.62)); // tangan
 
   // kaki bersendi: pinggul (paha) → lutut (betis) → pergelangan (sepatu), supaya jongkok/angkat lutut wajar
@@ -79,7 +80,8 @@ export function makeHumanoid({ skin, shirt, pants, hair, shoes = 0x3a3a46, hat =
 
   root.scale.setScalar(scale);
   return { root, body, upper, headPivot, armL, armR, legL, legR, torso, mats, baseScale: scale,
-    a: { t: Math.random() * 10, phase: 0, amp: 0, ground: true, land: 0, cy: 0 } };
+    fx: [],                                                             // animasi aksesori (baling-baling, jubah, sayap…)
+    a: { t: Math.random() * 10, phase: 0, amp: 0, ground: true, land: 0, toff: 0, cy: 0 } };
 }
 
 export const PUNCH_T = .3;
@@ -110,7 +112,9 @@ export function animateHumanoid(r, s, dt) {
 
   // mendarat → pegas sebentar
   if (!a.ground && !air) a.land = .2;
-  a.ground = !air; a.land = Math.max(0, a.land - dt);
+  if (a.ground && air) a.toff = .16;                                   // lepas landas → badan meregang sebentar
+  a.ground = !air; a.land = Math.max(0, a.land - dt); a.toff = Math.max(0, a.toff - dt);
+  const flip = s.flip > 0 ? s.flip : 0;                                // salto lompat ganda (0..1)
 
   // jurus hentak bumi: naik (angkat tangan) lalu menghantam
   const slamP = s.slam > 0 ? 1 - s.slam / .6 : -1;
@@ -119,7 +123,8 @@ export function animateHumanoid(r, s, dt) {
   // ---- kaki: pinggul (x+ = paha ke depan), lutut (x- = betis menekuk ke belakang), sepatu dijaga datar
   let lL, lR, nL = 0, nR = 0;
   const cyc = Math.cos(a.phase);
-  if (air) { lL = .95; nL = -1.3; lR = -.2; nR = -.75; }                                  // lutut ditekuk di udara
+  if (flip) { lL = lR = 1.5; nL = nR = -2.1; }                                             // salto: lutut dipeluk
+  else if (air) { lL = .95; nL = -1.3; lR = -.2; nR = -.75; }                             // lutut ditekuk di udara
   else if (s.crouch || slamDown) { lL = lR = 1.0; nL = nR = -2.0; }                       // jongkok: paha maju, betis ke belakang, telapak tetap di bawah badan
   else if (knees) { lL = s.kneeL * 1.5 + sw * .3; lR = s.kneeR * 1.5 - sw * .3; nL = -s.kneeL * 1.9; nR = -s.kneeR * 1.9; } // angkat lutut
   else { lL = sw; lR = -sw; nL = -Math.max(0, cyc) * a.amp * 1.3; nR = -Math.max(0, -cyc) * a.amp * 1.3; } // lutut menekuk saat kaki diayun ke depan
@@ -135,15 +140,21 @@ export function animateHumanoid(r, s, dt) {
   // ---- badan: jongkok, langkah memantul, napas, pegas mendarat
   const crouchY = s.crouch || slamDown ? -.32 : 0;           // pas dengan sudut paha 1.0 & lutut -2.0: telapak tetap di tanah
   a.cy += (crouchY - a.cy) * kq;
-  const bob = air || s.crouch ? 0 : Math.abs(Math.cos(a.phase)) * .075 * a.amp;
+  const bob = air || s.crouch ? 0 : Math.abs(Math.cos(a.phase)) * (.075 + .05 * gait) * a.amp;
   const breath = Math.sin(a.t * 2.2) * .012 * (1 - Math.min(1, a.amp * 2));
   r.body.position.y = a.cy + bob + breath;
   const sq = a.land > 0 ? Math.sin(a.land / .2 * Math.PI) * .12 : 0;
-  r.body.scale.set(1 + sq * .5, 1 - sq, 1 + sq * .5);
+  const str = a.toff > 0 ? Math.sin(a.toff / .16 * Math.PI) * .1 : 0;
+  r.body.scale.set(1 + sq * .5 - str * .3, 1 - sq + str, 1 + sq * .5 - str * .3);
+  // salto ke depan, berputar di sekitar pinggang (bukan di telapak kaki)
+  if (flip) {
+    const th = easeInOut(flip) * Math.PI * 2, h = .9;
+    r.body.rotation.x = -th; r.body.position.y += h - h * Math.cos(th); r.body.position.z = h * Math.sin(th);
+  } else if (r.body.rotation.x) { r.body.rotation.x = 0; r.body.position.z = 0; }
 
   // ---- pinggang: condong & memutar ke arah tinju
   const eL = punchExt(s.punchL || 0), eR = punchExt(s.punchR || 0);
-  let lean = -.14 * gait - (eL + eR) * .08;
+  let lean = -.22 * gait - (eL + eR) * .08;                            // makin cepat, makin condong
   if (s.crouch) lean = -.45;
   if (s.block) lean -= .06;
   if (s.windup) lean += .3 * s.windup;
@@ -164,10 +175,11 @@ export function animateHumanoid(r, s, dt) {
     else if (striking && sx > 0) { const q = clamp01(s.swing / .12); x = 3.4 - 2.6 * easeOut(q); z = 0; o.rotation.x = x; o.rotation.z = z; return; }
     else if (s.windup && sx > 0) { x = 1.4 + 2.0 * s.windup; z = .1; }                     // ancang-ancang mengangkat lengan
     else if (s.zombie) { x = 1.42 + legSw * .18; z = -sx * .06; }                         // lengan terjulur ala zombi
+    else if (flip) { x = 1.6; z = -sx * .2; }                                              // memeluk lutut saat salto
     else if (air) { x = .35; z = sx * .85; }
     else if (other > 0) { x = .75; z = -sx * .28; }                                        // tangan lain menjaga
     else if (s.crouch) { x = .95; z = -sx * .1; }
-    else { x = -clamp(legSw, -.85, .85) * .95; z = sx * (.05 + Math.sin(a.t * 2.2) * .02); }               // berayun berlawanan dengan kaki
+    else { x = -clamp(legSw, -.85, .85) * (.95 + .35 * gait); z = sx * (.05 + Math.sin(a.t * 2.2) * .02); }               // berayun berlawanan dengan kaki
     to(o, 'x', x, kq); to(o, 'z', z, kq);
   };
   arm(r.armL, -1, eL, eR, lL);
@@ -176,25 +188,20 @@ export function animateHumanoid(r, s, dt) {
   // ---- kepala menoleh/mendongak mengikuti pemain
   to(r.headPivot, 'y', s.headYaw || 0);
   to(r.headPivot, 'x', (s.headPitch || 0) * .7 + (s.crouch ? .3 : 0));
+
+  for (const f of r.fx) f(s, dt, a, gait, air);
 }
 
-/** Pakaian jagoan yang bisa dipilih anak (semua tanpa wajah). */
-export const OUTFITS = [
-  { id: 'biru', name: 'Biru Laut', skin: 0xf2c49b, shirt: 0x2fb5d6, pants: 0x3c4bb8, hair: 0x5a3a22 },
-  { id: 'merah', name: 'Merah Api', skin: 0xe0ac7e, shirt: 0xe8504a, pants: 0x3a3a50, hair: 0x2b1d14 },
-  { id: 'hijau', name: 'Hutan', skin: 0xc68e5e, shirt: 0x58b947, pants: 0x6b4a2e, hair: 0x1f1a17 },
-  { id: 'ungu', name: 'Ungu Galaksi', skin: 0xf2c49b, shirt: 0x9a6bea, pants: 0x2f2a5a, hair: 0xe8c34a },
-  { id: 'kuning', name: 'Kuning Petir', skin: 0x8d5a3b, shirt: 0xffc93c, pants: 0x2d6cdf, hair: 0x14100e },
-  { id: 'pink', name: 'Pink Permen', skin: 0xf6d2b4, shirt: 0xff7eb6, pants: 0x5a4bd6, hair: 0x7a3f1f },
-];
-
-/** Jagoan pemain (material sendiri supaya warnanya bisa diganti). */
-export function makeHero(outfit = OUTFITS[0]) {
-  return makeHumanoid({ ...outfit, own: true });
-}
-export function setOutfit(hero, o) {
-  hero.mats.skin.color.setHex(o.skin); hero.mats.shirt.color.setHex(o.shirt);
-  hero.mats.pants.color.setHex(o.pants); hero.mats.hair.color.setHex(o.hair);
+/** Jagoan pemain: material sendiri + tekstur baju dari kanvas (pola diatur lemari, lihat wardrobe.js). */
+export function makeHero() {
+  const r = makeHumanoid({ skin: 0xf2c49b, shirt: 0xffffff, pants: 0x3c4bb8, hair: 0x5a3a22, own: true });
+  const c = document.createElement('canvas'); c.width = c.height = 16;
+  const tex = new THREE.CanvasTexture(c);
+  tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.colorSpace = THREE.SRGBColorSpace;
+  r.mats.shirt.map = tex; r.shirtCanvas = c;
+  r.accHat = put(r.headPivot, new THREE.Group());
+  r.accBack = put(r.upper, new THREE.Group());
+  return r;
 }
 
 /** Monster kotak (tanpa wajah): kulit hijau-limau, baju ungu; level 2 berbaju merah & bertopi. */

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { buildWorld, setupSky, groundAt, walkable, blockAt, islandRadius } from './world.js';
-import { makeHero, makeBrute, makeSlime, makeBat, makeDummy, makeGem, makeHeart, makePunchWavePool, makeDebris, makeBlob, animateHumanoid, OUTFITS, setOutfit, PUNCH_T, easeOutBack } from './characters.js';
+import { makeHero, makeBrute, makeSlime, makeBat, makeDummy, makeGem, makeHeart, makePunchWavePool, makeDebris, makeBlob, animateHumanoid, PUNCH_T, easeOutBack } from './characters.js';
+import { SLOTS, ITEMS, loadWardrobe, saveWardrobe, applyLook, owns, buy, swatchOf, sleeveOf } from './wardrobe.js';
 import { createMotion, drawSkeleton } from './motion.js';
 import { sfx, music, unlock, setMuted, isMuted } from './audio.js';
 
@@ -9,7 +10,7 @@ const ui = {
   canvas: $('game'), cam: $('cam'), video: $('video'), pose: $('pose'), camStatus: $('cam-status'),
   hud: $('hud'), hearts: $('hearts'), wave: $('wave'), gems: $('gems'), steps: $('steps'), foes: $('foes'),
   energy: $('energy-fill'), energyBox: $('energy'), gesture: $('gesture'), prompt: $('prompt'), promptText: $('prompt-text'), promptSkip: $('prompt-skip'),
-  toast: $('toast'), hurt: $('hurt'), reticle: $('reticle'),
+  toast: $('toast'), hurt: $('hurt'), reticle: $('reticle'), foeArrow: $('foe-arrow'), overGems: $('over-gems'),
   start: $('start'), calib: $('calib'), calibCount: $('calib-count'), calibBar: $('calib-bar'), calibHint: $('calib-hint'),
   pause: $('pause'), pauseMsg: $('pause-msg'), over: $('over'), summary: $('summary'), overTitle: $('over-title'),
   touch: $('touch'), stick: $('stick'), knob: $('knob'),
@@ -53,13 +54,14 @@ resize();
 // ---------------------------------------------------------------------------
 // Pemain
 // ---------------------------------------------------------------------------
-let outfitId = 'biru'; try { outfitId = localStorage.getItem('kotak.outfit') || 'biru'; } catch {}
-const hero = makeHero(OUTFITS.find((o) => o.id === outfitId) || OUTFITS[0]);
+const wardrobe = loadWardrobe();          // dompet 💎 + barang milik + yang dipakai
+const hero = makeHero(); applyLook(hero, wardrobe.eq);
 scene.add(hero.root);
 const heroBlob = makeBlob(1); scene.add(heroBlob);
 const P = {
   pos: new THREE.Vector3(0, 2, 4), yaw: 0, vy: 0, onGround: true, speed: 0,
   hp: 5, maxHp: 5, invuln: 0, energy: 0, punchL: 0, punchR: 0, nextHand: 'R', phase: 0, superFx: 0, hurtT: 0,
+  airJumps: 0, flipT: 0, crouchT: 0, lastCrouch: 0, sinceCrouch: 9,
 };
 const stats = { steps: 0, punches: 0, jumps: 0, crouches: 0, kills: 0, gems: 0, active: 0, wave: 0 };
 
@@ -105,14 +107,42 @@ tapBtn('t-super', () => (ctl.superReq = true));
 const motion = createMotion();
 let landmarker = null, lastVideoTime = -1;
 const pctx = ui.pose.getContext('2d');
+// Deteksi pose sebaiknya di Web Worker (gambar game tidak tersendat saat deteksi berjalan).
+// Kalau worker gagal dimuat, kembali ke deteksi di thread utama.
+let poseWorker = null, workerBusy = false;
+function startPoseWorker() {
+  return new Promise((resolve, reject) => {
+    let w;
+    try { w = new Worker(new URL('./pose-worker.js', import.meta.url)); } catch (e) { reject(e); return; }
+    const timer = setTimeout(() => { w.terminate(); reject(new Error('worker timeout')); }, 45000);
+    w.onerror = (e) => { clearTimeout(timer); w.terminate(); reject(e); };
+    w.onmessage = (e) => {
+      const d = e.data;
+      if (d.type === 'ready') { clearTimeout(timer); w.onerror = null; resolve(w); }
+      else if (d.type === 'error') { clearTimeout(timer); w.terminate(); reject(new Error(d.message)); }
+      else if (d.type === 'pose') {
+        workerBusy = false;
+        if (ctl.source === 'pose' && state.mode !== 'start' && state.mode !== 'over') handlePose(d.all, d.world, d.ts);
+      }
+    };
+    w.postMessage({ type: 'init' });
+  });
+}
 async function startCamera() {
   ui.camStatus.textContent = 'memuat…';
-  const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14');
-  const files = await vision.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
-  landmarker = await vision.PoseLandmarker.createFromOptions(files, {
-    baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task', delegate: 'GPU' },
-    runningMode: 'VIDEO', numPoses: 2,
-  });
+  try {
+    poseWorker = await startPoseWorker();
+    landmarker = { worker: true };
+  } catch (err) {
+    console.warn('pose worker tidak tersedia, deteksi di thread utama:', err && err.message);
+    poseWorker = null;
+    const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14');
+    const files = await vision.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+    landmarker = await vision.PoseLandmarker.createFromOptions(files, {
+      baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task', delegate: 'GPU' },
+      runningMode: 'VIDEO', numPoses: 2,
+    });
+  }
   ui.camStatus.textContent = 'izinkan kamera ya…';
   const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }, audio: false });
   ui.video.srcObject = stream; await ui.video.play();
@@ -122,6 +152,14 @@ async function startCamera() {
 }
 function readPose(now) {
   if (!landmarker || ui.video.readyState < 2 || ui.video.currentTime === lastVideoTime) return null;
+  if (poseWorker) {
+    if (workerBusy) return null;                // satu frame diproses sekali waktu; sisanya dilewati
+    lastVideoTime = ui.video.currentTime; workerBusy = true;
+    createImageBitmap(ui.video)
+      .then((bitmap) => poseWorker.postMessage({ type: 'frame', bitmap, ts: performance.now() }, [bitmap]))
+      .catch(() => { workerBusy = false; });
+    return null;
+  }
   lastVideoTime = ui.video.currentTime;
   const res = landmarker.detectForVideo(ui.video, now);
   return handlePose(res.landmarks || [], res.worldLandmarks || [], now);
@@ -377,8 +415,8 @@ function startWave(n) {
 
 const TUT = [
   { key: 'walk', text: 'Jalan di tempat! Angkat lutut bergantian 👣', keys: 'Tahan W / ↑', touch: 'Dorong stik ke atas', need: 8 },
-  { key: 'left', text: 'Toleh kepala ke KIRI untuk belok ↩️', keys: 'Tahan A / ←', touch: 'Stik ke kiri', need: 1.4 },
-  { key: 'right', text: 'Toleh kepala ke KANAN untuk belok ↪️', keys: 'Tahan D / →', touch: 'Stik ke kanan', need: 1.4 },
+  { key: 'left', text: 'Toleh kepala / miringkan badan ke KIRI ↩️', keys: 'Tahan A / ←', touch: 'Stik ke kiri', need: 1.0 },
+  { key: 'right', text: 'Toleh kepala / miringkan badan ke KANAN ↪️', keys: 'Tahan D / →', touch: 'Stik ke kanan', need: 1.0 },
   { key: 'look', text: 'Dongakkan kepala — lihat ke ATAS ☁️', keys: 'Tahan Q', touch: 'Tahan tombol ☁️', need: .5 },
   { key: 'punch', text: 'Tinju orang-orangan jerami 3x! 👊', keys: 'J / K atau klik', touch: 'Tombol 👊', need: 3 },
   { key: 'block', text: 'Silangkan kedua tangan di depan wajah = PERISAI 🛡️', keys: 'Tahan L', touch: 'Tahan tombol 🛡️', need: .7 },
@@ -435,7 +473,7 @@ function resetGame() {
   for (const it of items) scene.remove(it.mesh); items.length = 0;
   for (const f of [...dying]) removeFoe(f);
   for (const w of waves) wavePool.release(w.mesh); waves.length = 0;
-  Object.assign(P, { yaw: 0, vy: 0, onGround: true, hp: 5, invuln: 0, energy: 0, punchL: 0, punchR: 0, superFx: 0, hurtT: 0, speed: 0 });
+  Object.assign(P, { yaw: 0, turnVel: 0, flipT: 0, airJumps: 0, crouchT: 0, lastCrouch: 0, sinceCrouch: 9, vy: 0, onGround: true, hp: 5, invuln: 0, energy: 0, punchL: 0, punchR: 0, superFx: 0, hurtT: 0, speed: 0 });
   P.pos.set(0, groundAt(0, 4), 4);
   Object.assign(stats, { steps: 0, punches: 0, jumps: 0, crouches: 0, kills: 0, gems: 0, active: 0, wave: 0 });
   Object.assign(state, { score: 0, wave: 0, queue: [], foesLeft: 0, elapsed: 0, breakT: 0 });
@@ -461,6 +499,10 @@ function gameOver() {
   const starN = state.wave >= 6 ? 3 : state.wave >= 3 ? 2 : stats.kills >= 3 ? 1 : 0;
   [...ui.stars.children].forEach((el, i) => el.classList.toggle('on', i < starN));
   ui.overBadge.hidden = !newBest;
+  // bonus permata dari bergerak: makin aktif, makin banyak 💎 untuk lemari
+  const bonus = Math.floor(stats.steps / 20) + state.wave * 2;
+  wardrobe.gems += bonus; saveWardrobe(wardrobe); syncWallet();
+  ui.overGems.innerHTML = `💎 +${stats.gems} permata · +${bonus} bonus gerak → <b>${wardrobe.gems}</b> di dompet. Belanja di <b>Lemari 👕</b>!`;
   const min = stats.active / 60;
   const kcal = Math.round(stats.steps * .045 + stats.punches * .12 + stats.jumps * .25 + stats.crouches * .2);
   ui.overTitle.textContent = stats.kills >= 10 ? 'Jagoan hebat! 🏆' : 'Bagus sekali! 💪';
@@ -500,7 +542,7 @@ function goHome() {
   music.stop(.2); music.paused = false; resetGame(); state.mode = 'start'; state.forceTutorial = false;
   Object.assign(P, { yaw: 0 }); P.pos.set(0, groundAt(0, 4), 4); showoff.t = 1.5;
   ui.pause.hidden = ui.over.hidden = ui.hud.hidden = ui.touch.hidden = ui.reticle.hidden = ui.prompt.hidden = ui.calib.hidden = true;
-  ui.pauseMsg.hidden = true; ui.cam.hidden = true; ui.start.hidden = false; ui.menuMain.hidden = false; ui.outfits.hidden = true;
+  ui.pauseMsg.hidden = true; ui.cam.hidden = true; ui.start.hidden = false; ui.menuMain.hidden = false; ui.outfits.hidden = true; ui.start.classList.remove('shop'); shop.pick = null; previewLook(); syncWallet();
   dummy.root.visible = false;
 }
 $('btn-home').addEventListener('click', goHome);
@@ -514,27 +556,73 @@ btnMute.addEventListener('click', toggleMute); mMute.addEventListener('click', t
 btnMusic.addEventListener('click', toggleMusic); mMusic.addEventListener('click', toggleMusic);
 syncSound();
 
+// mode anti pusing (bawaan: menyala): belok patah di mode kamera, putaran & lari lebih pelan
+let comfort = true;
+try { comfort = localStorage.getItem('kotak.comfort') !== '0'; } catch {}
+const mComfort = $('m-comfort');
+const syncComfort = () => { mComfort.classList.toggle('off', !comfort); mComfort.title = comfort ? 'Anti pusing: NYALA' : 'Anti pusing: MATI'; };
+mComfort.addEventListener('click', () => {
+  unlock(); comfort = !comfort; syncComfort(); sfx.check();
+  toast(comfort ? 'Anti pusing NYALA 🌀 — belok patah, gerak lebih pelan' : 'Anti pusing MATI — belok halus');
+  try { localStorage.setItem('kotak.comfort', comfort ? '1' : '0'); } catch {}
+});
+syncComfort();
+
 // cara main
 $('btn-howto').addEventListener('click', () => { unlock(); sfx.check(); ui.howto.hidden = false; });
 $('howto-close').addEventListener('click', () => { ui.howto.hidden = true; });
 ui.howto.addEventListener('click', (e) => { if (e.target === ui.howto) ui.howto.hidden = true; });
 
-// ganti baju jagoan
-const swatches = $('swatches');
-swatches.innerHTML = OUTFITS.map((o) => {
-  const c = (n) => '#' + o[n].toString(16).padStart(6, '0');
-  return `<button class="swatch" data-id="${o.id}" style="--skin:${c('skin')};--shirt:${c('shirt')};--pants:${c('pants')};--hair:${c('hair')}"><span class="fig"><i class="h"></i><i class="a"></i><i class="t"></i><i class="a"></i><i class="p"></i></span>${o.name}</button>`;
-}).join('');
-const markOutfit = () => swatches.querySelectorAll('.swatch').forEach((b) => b.classList.toggle('on', b.dataset.id === outfitId));
-markOutfit();
-swatches.addEventListener('click', (e) => {
-  const b = e.target.closest('.swatch'); if (!b) return;
-  outfitId = b.dataset.id; setOutfit(hero, OUTFITS.find((o) => o.id === outfitId)); markOutfit(); sfx.gem();
-  try { localStorage.setItem('kotak.outfit', outfitId); } catch {}
-  showoff.raise = .8;
+// lemari: coba barang (langsung terlihat di jagoan), beli dengan 💎, pakai
+const shop = { slot: 'shirt', pick: null };
+const shopTabs = $('shop-tabs'), shopItems = $('shop-items'), shopBuy = $('shop-buy'), shopMsg = $('shop-msg');
+const syncWallet = () => { for (const el of document.querySelectorAll('.wallet-n')) el.textContent = wardrobe.gems; };
+syncWallet();
+shopTabs.innerHTML = SLOTS.map((t) => `<button class="tab" data-slot="${t.id}"><i>${t.icon}</i>${t.name}</button>`).join('');
+function cardHtml(it) {
+  const own = owns(wardrobe, it), on = wardrobe.eq[it.slot] === it.id, pick = shop.pick === it.id;
+  const sw = swatchOf(it);
+  const art = sw ? `<span class="sw" style="--c:${sw};--s:${sleeveOf(it)}"></span>` : `<span class="ic">${it.icon}</span>`;
+  const tag = on ? '<em class="on">dipakai ✓</em>' : own ? '<em>punya</em>' : `<em class="price">💎 ${it.price}</em>`;
+  return `<button class="item${on ? ' on' : ''}${pick ? ' pick' : ''}${own ? '' : ' locked'}" data-id="${it.id}">${art}<b>${it.name}</b>${tag}</button>`;
+}
+function renderShop() {
+  shopTabs.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.slot === shop.slot));
+  shopItems.innerHTML = ITEMS.filter((i) => i.slot === shop.slot).map(cardHtml).join('');
+  const it = shop.pick && ITEMS.find((i) => i.id === shop.pick);
+  shopBuy.hidden = !it;
+  if (it) {
+    const short = it.price - wardrobe.gems;
+    shopBuy.disabled = short > 0;
+    shopBuy.innerHTML = short > 0 ? `Kurang 💎 ${short} lagi — ayo main & bergerak!` : `Beli ${it.name} · 💎 ${it.price}`;
+  }
+  syncWallet();
+}
+const previewLook = () => applyLook(hero, shop.pick ? { ...wardrobe.eq, [shop.slot]: shop.pick } : wardrobe.eq);
+shopTabs.addEventListener('click', (e) => {
+  const b = e.target.closest('.tab'); if (!b) return;
+  shop.slot = b.dataset.slot; shop.pick = null; previewLook(); renderShop(); sfx.tick();
 });
-$('btn-outfit').addEventListener('click', () => { unlock(); sfx.check(); ui.menuMain.hidden = true; ui.outfits.hidden = false; });
-$('outfit-done').addEventListener('click', () => { ui.outfits.hidden = true; ui.menuMain.hidden = false; });
+shopItems.addEventListener('click', (e) => {
+  const b = e.target.closest('.item'); if (!b) return;
+  const it = ITEMS.find((i) => i.id === b.dataset.id);
+  if (owns(wardrobe, it)) {                 // milik sendiri: langsung dipakai
+    wardrobe.eq[it.slot] = it.id; shop.pick = null; saveWardrobe(wardrobe); sfx.gem(); showoff.raise = .6;
+  } else { shop.pick = it.id; sfx.tick(); }  // belum punya: dicoba dulu
+  previewLook(); renderShop();
+});
+shopBuy.addEventListener('click', () => {
+  const it = ITEMS.find((i) => i.id === shop.pick); if (!it) return;
+  if (!buy(wardrobe, it)) { sfx.nope(); return; }
+  wardrobe.eq[it.slot] = it.id; shop.pick = null; saveWardrobe(wardrobe);
+  sfx.buy(); showoff.raise = 1.1; toast(`${it.name} jadi milikmu! 🎉`, 1600);
+  debris.burst(tmp.copy(P.pos).setY(P.pos.y + 1.2), 0xffe066, 16, 4, .1);
+  previewLook(); renderShop();
+});
+function openShop() { unlock(); sfx.check(); shop.pick = null; renderShop(); ui.menuMain.hidden = true; ui.outfits.hidden = false; ui.start.classList.add('shop'); }
+function closeShop() { shop.pick = null; previewLook(); ui.outfits.hidden = true; ui.menuMain.hidden = false; ui.start.classList.remove('shop'); }
+$('btn-outfit').addEventListener('click', openShop);
+$('outfit-done').addEventListener('click', closeShop);
 
 let calibStart = 0, calibSeen = 0;
 function beginCalib() {
@@ -568,7 +656,8 @@ const setClass = (el, c, on) => { el._c ??= {}; if (el._c[c] !== on) { el._c[c] 
 // jagoan pamer gerakan di menu utama (tinju, lompat, angkat tangan)
 const showoff = { t: 2, i: 0, raise: 0 };
 function menuShowoff(dt) {
-  P.yaw = menuFacing();
+  // di lemari tab Punggung: jagoan berbalik supaya jubah/ransel/sayap terlihat
+  P.yaw = menuFacing() + (!ui.outfits.hidden && shop.slot === 'back' ? Math.PI * .8 : 0);
   showoff.t -= dt; showoff.raise = Math.max(0, showoff.raise - dt);
   if (showoff.t <= 0) {
     const act = ['combo', 'jump', 'raise', 'combo', 'slam'][showoff.i++ % 5];
@@ -580,17 +669,57 @@ function menuShowoff(dt) {
   }
   physicsY(P, dt);
 }
-// mode kamera: kalau pemain tidak sedang belok, jagoan pelan-pelan menghadap monster terdekat
-// (menoleh terus sambil melihat layar itu sulit untuk anak, jadi arah dibantu)
-function assistFacing(dt) {
-  let best = null, bd = 18;
-  for (const f of foes) { const d = Math.hypot(f.pos.x - P.pos.x, f.pos.z - P.pos.z); if (d < bd) { bd = d; best = f; } }
-  if (!best || bd < 1.2) return;
-  const want = Math.atan2(-(best.pos.x - P.pos.x), -(best.pos.z - P.pos.z));
-  const diff = Math.atan2(Math.sin(want - P.yaw), Math.cos(want - P.yaw));
-  P.yaw += clamp(diff, -1, 1) * Math.min(1.3 * dt, Math.abs(diff));
+// Lompat: dari tanah (biasa / tinggi setelah jongkok) atau sekali lagi di udara (lompat ganda + salto)
+function jump() {
+  if (P.onGround) {
+    const high = (ctl.crouch && P.crouchT > .2) || (P.sinceCrouch < .45 && P.lastCrouch > .2);
+    P.vy = high ? 10.8 : 8.2; P.onGround = false; P.airJumps = 1; stats.jumps++;
+    P.crouchT = 0; P.lastCrouch = 0;
+    if (high) { sfx.highJump(); debris.burst(tmp.copy(P.pos).setY(P.pos.y + .1), 0xd8c9a0, 10, 3, .1); if (!P.toldHigh) { P.toldHigh = true; toast('LOMPAT TINGGI! 🚀'); } }
+    else sfx.jump();
+  } else if (P.airJumps > 0) {
+    P.airJumps--; P.vy = Math.max(P.vy, 0) * .3 + 7.4; P.flipT = .5; stats.jumps++; sfx.doubleJump();
+    debris.burst(tmp.copy(P.pos).setY(P.pos.y + .1), 0xffffff, 8, 2.5, .09);
+    if (!P.toldDouble) { P.toldDouble = true; toast('LOMPAT GANDA! ✨'); }
+  }
 }
-const menuFacing = () => Math.atan2(camera.position.x - P.pos.x, camera.position.z - P.pos.z);
+
+// Belok yang ramah mata (lihat README: putaran kamera adalah pemicu pusing terbesar).
+// Mode anti pusing + kamera: belok "patah" 30° sekaligus, tanpa putaran yang terlihat.
+// Selain itu: putaran halus dengan percepatan terbatas (mulai dan berhenti pelan, tidak menyentak).
+const SNAP = Math.PI / 6;
+const snap = { armed: true, t: 0 };
+function turnPlayer(dt) {
+  if (ctl.source === 'pose' && comfort) {
+    P.turnVel = 0;
+    const a = Math.abs(ctl.turn);
+    if (a < .25) { snap.armed = true; snap.t = 0; }
+    else if (a > .45) {
+      snap.t -= dt;
+      if (snap.armed || snap.t <= 0) { P.yaw += Math.sign(ctl.turn) * SNAP; P.snapped = true; snap.armed = false; snap.t = .8; sfx.tick(); }
+    }
+    return;
+  }
+  const max = ctl.source === 'pose' ? 1.2 : comfort ? 1.7 : 2.4;   // rad/dtk (dulu 2.0 di mode kamera)
+  const want = ctl.turn * max, acc = 5 * dt;
+  P.turnVel = (P.turnVel || 0) + clamp(want - (P.turnVel || 0), -acc, acc);
+  P.yaw += P.turnVel * dt;
+}
+// panah di tepi layar ke monster terdekat yang tidak terlihat (pengganti putar-otomatis kamera)
+function updateFoeArrow() {
+  let best = null, bd = 30;
+  for (const f of foes) { const d = Math.hypot(f.pos.x - P.pos.x, f.pos.z - P.pos.z); if (d < bd) { bd = d; best = f; } }
+  let show = '';
+  if (best && state.mode === 'play') {
+    const want = Math.atan2(-(best.pos.x - P.pos.x), -(best.pos.z - P.pos.z));
+    const diff = Math.atan2(Math.sin(want - P.yaw), Math.cos(want - P.yaw));
+    if (Math.abs(diff) > .75) show = diff > 0 ? 'L' : 'R';
+  }
+  setClass(ui.foeArrow, 'on', !!show); setClass(ui.foeArrow, 'r', show === 'R');
+  if (show) setText(ui.foeArrow, show === 'L' ? '◀ 👾' : '👾 ▶');
+}
+// jagoan menghadap kamera di menu (karakter menghadap -z lokal, jadi arah ke kamera dibalik)
+const menuFacing = () => Math.atan2(P.pos.x - camera.position.x, P.pos.z - camera.position.z);
 let last = performance.now(), frameTimes = [];
 function update(dt, now) {
   gatherInput(dt);
@@ -598,13 +727,17 @@ function update(dt, now) {
 
   if (active) {
     // gerak pemain
-    P.yaw += ctl.turn * (ctl.source === 'pose' ? 2.0 : 2.4) * dt;
-    if (ctl.source === 'pose' && state.mode === 'play' && Math.abs(ctl.turn) < .05) assistFacing(dt);
-    const target = ctl.crouch || ctl.block ? Math.min(ctl.fwd, .5) * 2 : ctl.fwd * (ctl.run ? 6.2 : 3.3);
-    P.speed += (target - P.speed) * Math.min(1, dt * 8);
+    turnPlayer(dt);
+    const runV = comfort ? 5 : 6.2, walkV = comfort ? 3 : 3.3;
+    const target = ctl.crouch || ctl.block ? Math.min(ctl.fwd, .5) * 2 : ctl.fwd * (ctl.run ? runV : walkV);
+    P.speed += (target - P.speed) * Math.min(1, dt * 3.5);       // mulai/berhenti pelan: perubahan laju memicu pusing
     const fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw);
     moveBody(P, fx * P.speed * dt, fz * P.speed * dt);
-    if (ctl.jump && P.onGround && !ctl.crouch) { P.vy = 8.2; P.onGround = false; stats.jumps++; sfx.jump(); }
+    // jongkok yang baru selesai (≤0.45 dtk) atau masih ditahan → lompatan berikutnya jadi LOMPAT TINGGI
+    if (ctl.crouch && P.onGround) P.crouchT += dt;
+    else if (P.wasCrouch) { P.lastCrouch = P.crouchT; P.sinceCrouch = 0; P.crouchT = 0; }
+    P.sinceCrouch += dt;
+    if (ctl.jump) jump();
     if (ctl.crouch && !P.wasCrouch) stats.crouches++;
     P.wasCrouch = ctl.crouch;
     physicsY(P, dt);
@@ -615,6 +748,7 @@ function update(dt, now) {
     state.elapsed += dt;
   }
   ctl.punchL = ctl.punchR = ctl.jump = ctl.superReq = false;
+  P.flipT = P.onGround ? 0 : Math.max(0, P.flipT - dt);
   P.punchL = Math.max(0, P.punchL - dt); P.punchR = Math.max(0, P.punchR - dt); P.invuln = Math.max(0, P.invuln - dt); P.hurtT = Math.max(0, P.hurtT - dt);
 
   // jagoan: posisi & animasi
@@ -622,16 +756,20 @@ function update(dt, now) {
   if (menu) menuShowoff(dt);
   hero.root.position.copy(P.pos);
   const dyaw = Math.atan2(Math.sin(P.yaw - hero.root.rotation.y), Math.cos(P.yaw - hero.root.rotation.y));
-  hero.root.rotation.y += dyaw * Math.min(1, dt * (menu ? 4 : 20));
+  hero.root.rotation.y += P.snapped ? dyaw : dyaw * Math.min(1, dt * (menu ? 4 : 20));
   const s = motion.st, posed = ctl.source === 'pose' && s.ok && !menu;
   animateHumanoid(hero, {
     speed: menu ? 0 : P.speed, onGround: P.onGround,
     kneeL: posed && !s.moving ? s.kneeL : undefined, kneeR: s.kneeR,
-    punchL: P.punchL, punchR: P.punchR, block: !menu && ctl.block, crouch: !menu && ctl.crouch,
+    punchL: P.punchL, punchR: P.punchR, block: !menu && ctl.block, crouch: !menu && ctl.crouch && P.onGround,
+    flip: P.flipT > 0 ? 1 - P.flipT / .5 : 0,
     raise: (posed && s.raise) || (menu && showoff.raise > 0), slam: P.superFx, hurt: P.hurtT / .35,
     headYaw: ctl.source === 'pose' && !menu ? ctl.turn * .5 : menu ? Math.sin(now * .0007) * .25 : 0, headPitch: menu ? 0 : ctl.look,
   }, dt);
   hero.root.visible = P.invuln <= 0 || Math.floor(now / 90) % 2 === 0;
+  // debu kecil di setiap jejak saat berlari
+  const foot = Math.floor(hero.a.phase / Math.PI);
+  if (foot !== P.lastFoot) { P.lastFoot = foot; if (!menu && P.onGround && P.speed > 4.2) debris.burst(tmp.copy(P.pos).setY(P.pos.y + .05), 0xcbb991, 2, 1.2, .07); }
   const hg = groundAt(P.pos.x, P.pos.z);
   heroBlob.position.set(P.pos.x, hg + .03, P.pos.z); heroBlob.scale.setScalar(Math.max(.5, 1 - (P.pos.y - hg) * .12));
   if (dummyWobble > 0) { dummyWobble = Math.max(0, dummyWobble - dt * 2.2); dummy.top.rotation.x = -Math.sin(dummyWobble * 14) * dummyWobble * .35; }
@@ -669,6 +807,7 @@ function update(dt, now) {
   }
 
   updateCamera(dt);
+  updateFoeArrow();
 }
 
 function updateFoes(dt, now) {
@@ -804,7 +943,7 @@ function updateItems(dt) {
     else { it.v.y -= 14 * dt; it.pos.addScaledVector(it.v, dt); if (it.pos.y < g) { it.pos.y = g; it.v.set(0, 0, 0); } }
     it.mesh.position.copy(it.pos); it.mesh.position.y += Math.sin(it.t * 3) * .08; it.mesh.rotation.y += dt * 3;
     if (it.t > .5 && d < .8 && (state.mode === 'play' || state.mode === 'tutorial')) {
-      if (it.kind === 'gem') { stats.gems++; state.score += 5; sfx.gem(); }
+      if (it.kind === 'gem') { stats.gems++; wardrobe.gems++; saveWardrobe(wardrobe); state.score += 5; sfx.gem(); }
       else if (P.hp < P.maxHp) { P.hp++; renderHearts(); sfx.heart(); toast('+1 ❤️'); }
       else { state.score += 20; sfx.gem(); }
       scene.remove(it.mesh); items.splice(items.indexOf(it), 1);
@@ -820,19 +959,21 @@ function updateCamera(dt) {
     // jagoan di depan kamera, berayun pelan; di layar lebar jagoan di sisi kanan (menu di kiri)
     const portrait = innerHeight > innerWidth;
     const a = Math.sin(performance.now() * .00012) * .35 + .5;
-    const d = portrait ? 7.8 : 5.6, h = portrait ? 1.2 : 1.6;
+    // lemari terbuka di HP tegak: jagoan dinaikkan ke bagian atas layar supaya barang yang dicoba terlihat
+    const shopUp = portrait && !ui.outfits.hidden;
+    const d = shopUp ? 7.6 : portrait ? 7.8 : 5.6, h = portrait ? 1.2 : 1.6;
     camWant.set(P.pos.x + Math.sin(a) * d, P.pos.y + h + 1.0, P.pos.z + Math.cos(a) * d);
     if (!menuCamInit) { camPos.copy(camWant); menuCamInit = true; }
     camPos.lerp(camWant, Math.min(1, dt * 3));
     camera.position.copy(camPos);
     const side = portrait ? 0 : -2.0;                                // geser titik pandang ke kiri → jagoan tampak di kanan
     const rx = Math.cos(a), rz = -Math.sin(a);                        // vektor kanan kamera
-    camLook.set(P.pos.x + rx * side, P.pos.y + (portrait ? -1.5 : 1.05), P.pos.z + rz * side);
+    camLook.set(P.pos.x + rx * side, P.pos.y + (shopUp ? -3.6 : portrait ? -1.5 : 1.05), P.pos.z + rz * side);
     camera.lookAt(camLook); return;
   }
   menuCamInit = false;
   // kamera bahu yang agak tinggi: jagoan di bawah, monster di depan tetap terlihat di atas kepalanya
-  const cp = .44 - ctl.look * .7;                         // dongak → kamera turun & melihat ke atas
+  const cp = .44 - ctl.look * .4;                         // dongak → kamera sedikit turun & melihat ke atas
   const d = 5.8;
   const bx = Math.sin(P.yaw), bz = Math.cos(P.yaw);
   const target = tmp.set(P.pos.x, P.pos.y + 1.5 + (ctl.crouch ? -.35 : 0), P.pos.z);
@@ -846,7 +987,10 @@ function updateCamera(dt) {
   }
   want.copy(target).addScaledVector(ray, free / len);
   want.y = Math.max(want.y, groundAt(want.x, want.z) + .4);
-  camPos.lerp(want, Math.min(1, dt * (free < len ? 18 : 8)));
+  // terhalang pohon: maju agak cepat; mundur lagi pelan (tidak memompa maju-mundur)
+  if (P.snapped) camPos.copy(want);
+  else camPos.lerp(want, Math.min(1, dt * (camPos.distanceTo(target) > free ? 7 : 3)));
+  P.snapped = false;
   camera.position.copy(camPos);
   camLook.set(target.x - bx * 8, target.y + ctl.look * 8 - .1, target.z - bz * 8);
   camera.lookAt(camLook);
@@ -902,4 +1046,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-if (DEBUG) window.__game = { state, P, stats, ctl, motion, foes, dying, items, hero, camera, handlePose, spawnFoe, beginGame, startWave, renderer, scene, keys, punch, superSlam, endTutorial, setSource: (s) => (ctl.source = s) };
+if (DEBUG) window.__game = { state, P, stats, ctl, motion, foes, dying, items, hero, camera, handlePose, spawnFoe, beginGame, startWave, renderer, scene, keys, punch, superSlam, endTutorial, wardrobe, gameOver, applyLook, setSource: (s) => (ctl.source = s) };
