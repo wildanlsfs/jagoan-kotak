@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { buildWorld, setupSky, groundAt, walkable, blockAt, islandRadius } from './world.js';
-import { makeHero, makeBrute, makeSlime, makeBat, makeDummy, makeGem, makeHeart, makePunchWavePool, makeDebris, makeBlob, animateHumanoid, PUNCH_T, easeOutBack } from './characters.js';
+import { buildWorld, setupSky, groundAt, walkable, blockAt, islandRadius, ARENA_R } from './world.js';
+import { makeHero, makeBrute, makeBoss, makeSlime, makeBat, makeDummy, makeGem, makeHeart, makePunchWavePool, makeDebris, makeBlob, animateHumanoid, PUNCH_T, easeOutBack } from './characters.js';
 import { SLOTS, ITEMS, loadWardrobe, saveWardrobe, applyLook, owns, buy, swatchOf, sleeveOf } from './wardrobe.js';
 import { createMotion, drawSkeleton } from './motion.js';
 import { sfx, music, unlock, setMuted, isMuted } from './audio.js';
@@ -16,9 +16,14 @@ const ui = {
   touch: $('touch'), stick: $('stick'), knob: $('knob'),
   howto: $('howto'), outfits: $('outfits'), menuMain: $('menu-main'), recWave: $('rec-wave'), recSteps: $('rec-steps'), recKills: $('rec-kills'),
   overBadge: $('over-badge'), stars: $('stars'),
+  boss: $('boss'), bossFill: $('boss-fill'), bossLag: $('boss-lag'), bossLv: $('boss-lv'),
 };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const DEBUG = location.search.includes('debug');
+// Mode arena = main dengan kamera. Tanpa kacamata VR, mata pemain harus SELALU ke layar, jadi tidak ada
+// belok dengan menoleh: kamera tidak pernah berputar, jagoan otomatis menghadap monster terdekat,
+// jalan di tempat = mendekatinya, condong badan kiri/kanan = bergeser kiri/kanan layar.
+const arena = () => ctl.source === 'pose';
 
 // ---------------------------------------------------------------------------
 // Renderer, scene, kamera
@@ -61,14 +66,14 @@ const heroBlob = makeBlob(1); scene.add(heroBlob);
 const P = {
   pos: new THREE.Vector3(0, 2, 4), yaw: 0, vy: 0, onGround: true, speed: 0,
   hp: 5, maxHp: 5, invuln: 0, energy: 0, punchL: 0, punchR: 0, nextHand: 'R', phase: 0, superFx: 0, hurtT: 0,
-  airJumps: 0, flipT: 0, crouchT: 0, lastCrouch: 0, sinceCrouch: 9,
+  airJumps: 0, flipT: 0, crouchT: 0, lastCrouch: 0, sinceCrouch: 9, vel: new THREE.Vector3(), yawWant: 0,
 };
-const stats = { steps: 0, punches: 0, jumps: 0, crouches: 0, kills: 0, gems: 0, active: 0, wave: 0 };
+const stats = { steps: 0, punches: 0, jumps: 0, crouches: 0, kills: 0, gems: 0, active: 0, wave: 0, bosses: 0 };
 
 // ---------------------------------------------------------------------------
 // Input gabungan: kamera (gerak tubuh), keyboard, sentuh
 // ---------------------------------------------------------------------------
-const ctl = { fwd: 0, run: false, turn: 0, look: 0, block: false, crouch: false, punchL: false, punchR: false, jump: false, superReq: false, source: 'keyboard' };
+const ctl = { fwd: 0, run: false, turn: 0, side: 0, look: 0, block: false, crouch: false, punchL: false, punchR: false, jump: false, superReq: false, source: 'keyboard' };
 const keys = new Set();
 addEventListener('keydown', (e) => {
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
@@ -184,17 +189,17 @@ function handlePose(all, world, now) {
   if (!s.ok) {
     ui.camStatus.textContent = motion.lostSince && all.length ? 'Itu bukan kamu 👀' : 'Kamu tidak terlihat 👀';
     if (state.mode === 'play' && motion.lostSince && now - motion.lostSince > 2000) { togglePause(); ui.pauseMsg.hidden = false; }
-  } else ui.camStatus.textContent = !s.kneesVisible && !s.moving ? 'Lutut tak terlihat — melangkah yang mantap ya' : s.block ? 'perisai 🛡️' : s.crouch ? 'jongkok 🙇' : s.run ? 'lari! 🏃' : s.moving ? 'jalan 🚶' : s.raise ? 'tangan ke atas 🙌' : s.turn > .2 ? 'belok kiri ↩️' : s.turn < -.2 ? 'belok kanan ↪️' : 'siap 🙂';
+  } else ui.camStatus.textContent = !s.kneesVisible && !s.moving ? 'Lutut tak terlihat — melangkah yang mantap ya' : s.block ? 'perisai 🛡️' : s.crouch ? 'jongkok 🙇' : s.run ? 'lari! 🏃' : s.moving ? 'jalan 🚶' : s.raise ? 'tangan ke atas 🙌' : s.side > .3 ? 'geser kiri ⬅️' : s.side < -.3 ? 'geser kanan ➡️' : 'siap 🙂';
   return ev;
 }
 
 function gatherInput(dt) {
   const s = motion.st;
   if (ctl.source === 'pose') {
-    ctl.fwd = s.moving ? 1 : 0; ctl.run = s.run; ctl.turn = s.turn; ctl.look = s.look; ctl.block = s.block; ctl.crouch = s.crouch;
+    ctl.fwd = s.moving ? 1 : 0; ctl.run = s.run; ctl.turn = 0; ctl.side = s.side; ctl.look = 0; ctl.block = s.block; ctl.crouch = s.crouch;
   } else {
     const up = keys.has('KeyW') || keys.has('ArrowUp'), back = keys.has('KeyS') || keys.has('ArrowDown');
-    ctl.fwd = up ? 1 : back ? -.6 : 0; ctl.run = keys.has('ShiftLeft') || keys.has('ShiftRight');
+    ctl.fwd = up ? 1 : back ? -.6 : 0; ctl.run = keys.has('ShiftLeft') || keys.has('ShiftRight'); ctl.side = 0;
     ctl.turn = (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) - (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0);
     const lookT = keys.has('KeyQ') ? 1 : keys.has('KeyE') ? -.5 : 0;
     ctl.block = keys.has('KeyL'); ctl.crouch = keys.has('KeyC') || keys.has('ControlLeft');
@@ -253,28 +258,84 @@ const FOE = {
   brute: { hp: 3, h: 1.8, r: .4, speed: 1.45, gems: 2, score: 20, color: 0x8e6bd6 },
   brute2: { hp: 5, h: 2.05, r: .45, speed: 1.8, gems: 3, score: 35, color: 0xd65b5b },
   bat: { hp: 1, h: .5, r: .45, speed: 0, gems: 2, score: 15, color: 0x6a4f94 },
+  boss: { hp: 26, h: 4.1, r: 1.0, speed: 1.5, gems: 15, score: 300, color: 0x9ea3ab },
 };
 function spawnFoe(type, near) {
   const def = FOE[type];
   let rig;
   if (type === 'slime' || type === 'slimeS') rig = makeSlime(type === 'slime');
   else if (type === 'bat') rig = makeBat();
+  else if (type === 'boss') rig = makeBoss();
   else rig = makeBrute(type === 'brute2' ? 2 : 1);
   const f = { type, def, rig, hp: def.hp, pos: new THREE.Vector3(), yaw: 0, vy: 0, onGround: true, t: Math.random() * 1.5, state: 'chase', timer: 0, flash: 0, knock: new THREE.Vector3(), phase: Math.random() * 6, hurtCd: 0, orbit: Math.random() * 6,
     born: 0, hurtT: 0, atkT: -1, speed: 0 };
-  // tempat muncul: di pulau, jauh dari pemain
-  for (let k = 0; k < 60; k++) {
-    const a = Math.random() * Math.PI * 2, d = near ? 1.2 : 12 + Math.random() * 8;
-    const x = (near ? near.x : P.pos.x) + Math.cos(a) * d, z = (near ? near.z : P.pos.z) + Math.sin(a) * d;
-    if (Math.hypot(x, z) < islandRadius - 3 && walkable(x, z)) { f.pos.set(x, groundAt(x, z), z); break; }
-  }
+  spawnPoint(def, near, type === 'bat', f.pos);
   if (type === 'bat') f.pos.y += 4.5;
+  if (type === 'boss') {
+    f.hp = f.maxHp = def.hp + 8 * (state.bossLv - 1);
+    f.pos.y += 14; f.onGround = false; f.state = 'intro'; f.born = 1; f.cd = 0; f.told = {};
+    ui.boss.hidden = false; ui.boss.classList.remove('rage'); ui.bossLv.textContent = state.bossLv > 1 ? `Lv ${state.bossLv}` : '';
+    setStyle(ui.bossFill, 'width', '100%'); setStyle(ui.bossLag, 'width', '100%');
+    sfx.boss(); toast('👑 RAJA BATU DATANG!', 1800);
+  }
   f.blob = makeBlob(def.r * 2.2); scene.add(f.blob);
   rig.root.position.copy(f.pos); rig.root.scale.setScalar(.01);
   scene.add(rig.root);
   foes.push(f);
   debris.burst(f.pos.clone().add(new THREE.Vector3(0, .5, 0)), 0xffffff, 10, 3);
   return f;
+}
+// Tempat muncul yang PASTI bisa dicapai. Dulu monster kadang muncul di sela pohon/batu atau di balik
+// tebing (tidak bisa bergerak), dan kalau pencarian gagal posisinya tertinggal di (0,0,0): tertanam di
+// tanah. Sekarang: utamakan arena (datar, tanpa pohon), periksa jalur lurus ke pemain, selalu ada cadangan.
+function pathClear(ax, az, bx, bz) {
+  const d = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(d / .4));
+  let y = groundAt(ax, az);
+  for (let i = 1; i <= n; i++) {
+    const x = ax + (bx - ax) * i / n, z = az + (bz - az) * i / n;
+    if (!walkable(x, z)) return false;
+    const g = groundAt(x, z); if (Math.abs(g - y) > 1) return false; y = g;
+  }
+  return true;
+}
+const roomy = (x, z, r) => walkable(x, z) && walkable(x + r, z) && walkable(x - r, z) && walkable(x, z + r) && walkable(x, z - r);
+function spawnPoint(def, near, fly, out = new THREE.Vector3()) {
+  const ok = (x, z) => Math.hypot(x, z) < islandRadius - 3 && roomy(x, z, def.r) && (fly || pathClear(x, z, P.pos.x, P.pos.z));
+  if (near) {
+    for (let k = 0; k < 12; k++) { const a = Math.random() * Math.PI * 2, x = near.x + Math.cos(a) * 1.2, z = near.z + Math.sin(a) * 1.2; if (roomy(x, z, def.r)) return out.set(x, groundAt(x, z), z); }
+    return out.set(near.x, groundAt(near.x, near.z), near.z);
+  }
+  const inArena = arena() || Math.hypot(P.pos.x, P.pos.z) < ARENA_R + 1;
+  for (let k = 0; k < 80; k++) {
+    let x, z;
+    if (inArena) {
+      // mode kamera: di depan kamera (-z) supaya langsung terlihat; selain itu di mana saja di arena
+      const a = arena() && k < 50 ? -Math.PI / 2 + (Math.random() - .5) * 2.4 : Math.random() * Math.PI * 2;
+      const r = ARENA_R - 1.6 - Math.random() * 4;
+      x = Math.cos(a) * r; z = Math.sin(a) * r;
+      if (Math.hypot(x - P.pos.x, z - P.pos.z) < 5.5) continue;
+    } else {
+      const a = Math.random() * Math.PI * 2, d = 7 + Math.random() * 5;
+      x = P.pos.x + Math.cos(a) * d; z = P.pos.z + Math.sin(a) * d;
+    }
+    if (ok(x, z)) return out.set(x, groundAt(x, z), z);
+  }
+  const a = Math.atan2(P.pos.z, P.pos.x) + Math.PI, x = Math.cos(a) * 6, z = Math.sin(a) * 6; // cadangan: arena di seberang pemain
+  return out.set(x, groundAt(x, z), z);
+}
+// monster yang tersangkut (tidak bergerak padahal masih jauh) atau tertanam: pindahkan dengan "puf"
+function unstick(f, dt, dist) {
+  f.chk = (f.chk || 0) + dt;
+  if (f.chk < 2) return;
+  f.chk = 0;
+  const moved = f.lastPos ? Math.hypot(f.pos.x - f.lastPos.x, f.pos.z - f.lastPos.z) : 9;
+  f.lastPos = (f.lastPos || new THREE.Vector3()).copy(f.pos);
+  const buried = f.pos.y < groundAt(f.pos.x, f.pos.z) - .3;
+  f.stuck = dist > 2.6 && moved < .5 && f.state !== 'windup' && f.state !== 'recover' ? (f.stuck || 0) + 1 : 0;
+  if (!buried && f.stuck < 2) return;
+  debris.burst(center(f), 0xffffff, 10, 3, .12);
+  spawnPoint(f.def, null, false, f.pos); f.vy = 0; f.onGround = true; f.knock.set(0, 0, 0); f.born = 0; f.stuck = 0; f.lastPos = null;
+  debris.burst(center(f), 0xffffff, 10, 3);
 }
 function removeFoe(f) {
   scene.remove(f.rig.root); scene.remove(f.blob);
@@ -285,9 +346,12 @@ function setFlash(f, on) {
   f.rig.root.traverse((o) => { if (o.isMesh) { if (on) { o.userData.m ??= o.material; o.material = flashMat; } else if (o.userData.m) o.material = o.userData.m; } });
 }
 function hurtFoe(f, dmg, dir, power = 4) {
+  const boss = f.type === 'boss';
+  if (boss && f.state === 'dizzy') dmg *= 2;                             // bos pusing = kesempatan emas
   f.hp -= dmg; f.flash = .12; f.hurtT = .3; setFlash(f, true);
-  f.knock.set(dir.x, 0, dir.z).normalize().multiplyScalar(power);
-  if (f.type !== 'bat') { f.vy = 3.5; f.onGround = false; }
+  f.knock.set(dir.x, 0, dir.z).normalize().multiplyScalar(boss ? power * .12 : power);
+  if (boss) { setStyle(ui.bossFill, 'width', `${Math.max(0, f.hp / f.maxHp * 100)}%`); setStyle(ui.bossLag, 'width', `${Math.max(0, f.hp / f.maxHp * 100)}%`); }
+  else if (f.type !== 'bat') { f.vy = 3.5; f.onGround = false; }
   else { f.state = 'circle'; f.timer = 2.5; }
   if (f.state === 'windup') { f.state = 'recover'; f.timer = .6; }
   debris.burst(center(f), f.def.color, 8, 4);
@@ -302,6 +366,11 @@ function killFoe(f) {
   for (let k = 0; k < f.def.gems; k++) dropItem('gem', c);
   if (Math.random() < .14 || (P.hp <= 2 && Math.random() < .35)) dropItem('heart', c);
   if (f.type === 'slime') { spawnFoe('slimeS', f.pos); spawnFoe('slimeS', f.pos); state.foesLeft += 2; }
+  if (f.type === 'boss') {
+    ui.boss.hidden = true; f.rig.stars.visible = false; stats.bosses++;
+    dropItem('heart', c); dropItem('heart', c); debris.burst(c, 0xffc83d, 40, 9, .25);
+    sfx.win(); toast('RAJA BATU KALAH! 🏆', 2200);
+  }
   // roboh dulu sebentar (bukan langsung hilang), lalu jadi serpihan
   foes.splice(foes.indexOf(f), 1); dying.push(f); state.foesLeft--;
   f.die = 0; f.fallDir = Math.random() < .5 ? 1 : -1; f.flash = .5; setFlash(f, true);
@@ -327,11 +396,11 @@ function dropItem(kind, at) {
   scene.add(mesh); items.push(it);
 }
 
-function damagePlayer(from, label) {
+function damagePlayer(from, label, unblockable = false) {
   if (P.invuln > 0 || state.mode !== 'play') return false;
   const dir = new THREE.Vector3().subVectors(P.pos, from).setY(0).normalize();
   const fwd = new THREE.Vector3(-Math.sin(P.yaw), 0, -Math.cos(P.yaw));
-  if (ctl.block && fwd.dot(dir) < -.2) { // serangan dari depan ditangkis
+  if (ctl.block && !unblockable && fwd.dot(dir) < -.2) { // serangan dari depan ditangkis
     sfx.block(); toast('TANGKIS! 🛡️'); debris.burst(P.pos.clone().add(new THREE.Vector3(0, 1.3, 0)).addScaledVector(fwd, .5), 0x5ef0ff, 10, 3);
     P.energy = Math.min(100, P.energy + 6);
     return 'blocked';
@@ -369,7 +438,7 @@ function punch(hand) {
     to.normalize();
     const flat = Math.acos(clamp(new THREE.Vector2(to.x, to.z).normalize().dot(new THREE.Vector2(dir.x, dir.z).normalize()), -1, 1));
     const vert = Math.abs(Math.asin(clamp(to.y, -1, 1)) - Math.asin(clamp(dir.y, -1, 1)));
-    if (flat < .55 && vert < .5) { const sc = flat + vert + d * .03; if (sc < bestScore) { bestScore = sc; best = to; } }
+    if (flat < .55 && vert < (arena() ? 1.1 : .5)) { const sc = flat + vert + d * .03; if (sc < bestScore) { bestScore = sc; best = to; } }
   }
   if (best) dir = best;
   const mesh = wavePool.get(); mesh.position.copy(origin);
@@ -389,7 +458,7 @@ function superSlam() {
 // ---------------------------------------------------------------------------
 // Status game, gelombang, tutorial
 // ---------------------------------------------------------------------------
-const state = { mode: 'start', score: 0, wave: 0, queue: [], foesLeft: 0, spawnT: 0, breakT: 0, tutorial: null, elapsed: 0, paused: false };
+const state = { mode: 'start', score: 0, wave: 0, queue: [], foesLeft: 0, spawnT: 0, breakT: 0, tutorial: null, elapsed: 0, paused: false, bossLv: 0 };
 let best = 0; try { best = +localStorage.getItem('kotak.best') || 0; } catch {}
 // catatan seumur main (disimpan di perangkat): total langkah & monster
 const life = { steps: 0, kills: 0, games: 0 };
@@ -398,7 +467,10 @@ const fmt = (n) => n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}rb` :
 function renderRecords() { ui.recWave.textContent = best; ui.recSteps.textContent = fmt(life.steps); ui.recKills.textContent = fmt(life.kills); }
 renderRecords();
 
+// setiap gelombang ke-5 = bos (Raja Batu, makin kuat tiap kali muncul)
+const BOSS_EVERY = 5;
 function planWave(n) {
+  if (n % BOSS_EVERY === 0) return ['boss'];
   const q = [];
   const slimes = Math.min(2 + n, 7), brutes = n >= 2 ? Math.min(n - 1, 5) : 0, bats = n >= 3 ? Math.min(n - 2, 4) : 0, big = n >= 5 ? Math.floor((n - 3) / 2) : 0;
   for (let i = 0; i < slimes; i++) q.push('slime');
@@ -410,28 +482,30 @@ function planWave(n) {
 }
 function startWave(n) {
   state.wave = n; stats.wave = n; state.queue = planWave(n); state.foesLeft = state.queue.length; state.spawnT = 1.2;
-  ui.wave.textContent = n; sfx.wave(); toast(`Gelombang ${n}! 👾`, 1500);
+  ui.wave.textContent = n;
+  if (n % BOSS_EVERY === 0) { state.bossLv = n / BOSS_EVERY; state.spawnT = 2.2; sfx.warn(); toast(`Gelombang ${n}: BOS! 👑`, 1800); }
+  else { sfx.wave(); toast(`Gelombang ${n}! 👾`, 1500); }
 }
 
 const TUT = [
   { key: 'walk', text: 'Jalan di tempat! Angkat lutut bergantian 👣', keys: 'Tahan W / ↑', touch: 'Dorong stik ke atas', need: 8 },
-  { key: 'left', text: 'Toleh kepala / miringkan badan ke KIRI ↩️', keys: 'Tahan A / ←', touch: 'Stik ke kiri', need: 1.0 },
-  { key: 'right', text: 'Toleh kepala / miringkan badan ke KANAN ↪️', keys: 'Tahan D / →', touch: 'Stik ke kanan', need: 1.0 },
-  { key: 'look', text: 'Dongakkan kepala — lihat ke ATAS ☁️', keys: 'Tahan Q', touch: 'Tahan tombol ☁️', need: .5 },
+  { key: 'left', text: 'Belok KIRI ↩️', pose: 'Condongkan badan ke KIRI — jagoan bergeser ⬅️ (mata tetap ke layar)', keys: 'Tahan A / ←', touch: 'Stik ke kiri', need: 1.0 },
+  { key: 'right', text: 'Belok KANAN ↪️', pose: 'Condongkan badan ke KANAN — jagoan bergeser ➡️', keys: 'Tahan D / →', touch: 'Stik ke kanan', need: 1.0 },
+  { key: 'look', text: 'Lihat ke ATAS ☁️', keys: 'Tahan Q', touch: 'Tahan tombol ☁️', need: .5, noPose: true },
   { key: 'punch', text: 'Tinju orang-orangan jerami 3x! 👊', keys: 'J / K atau klik', touch: 'Tombol 👊', need: 3 },
   { key: 'block', text: 'Silangkan kedua tangan di depan wajah = PERISAI 🛡️', keys: 'Tahan L', touch: 'Tahan tombol 🛡️', need: .7 },
   { key: 'jump', text: 'Lompat! 🦘', keys: 'Spasi', touch: 'Tombol 🦘', need: 1 },
   { key: 'crouch', text: 'Jongkok! 🙇', keys: 'Tahan C', touch: 'Tahan tombol 🙇', need: .4 },
 ];
 function startTutorial() {
-  state.mode = 'tutorial'; state.tutorial = { i: 0, prog: 0, steps0: stats.steps, yaw0: P.yaw, jumps0: stats.jumps };
+  state.mode = 'tutorial'; state.tutorial = { i: 0, prog: 0, steps0: stats.steps, yaw0: P.yaw, x0: P.pos.x, jumps0: stats.jumps, list: TUT.filter((t) => !(arena() && t.noPose)) };
   ui.prompt.hidden = false; showTutStep();
 }
 function showTutStep() {
-  const t = TUT[state.tutorial.i];
+  const L = state.tutorial.list, t = L[state.tutorial.i];
   const hint = ctl.source === 'pose' ? '' : matchMedia('(pointer: coarse)').matches ? t.touch : t.keys;
-  ui.promptText.innerHTML = `<b>${state.tutorial.i + 1}/${TUT.length}</b> ${t.text}<small>${hint}</small><i class="prog"><i></i></i>`;
-  state.tutorial.prog = 0; state.tutorial.steps0 = stats.steps; state.tutorial.yaw0 = P.yaw; state.tutorial.jumps0 = stats.jumps;
+  ui.promptText.innerHTML = `<b>${state.tutorial.i + 1}/${L.length}</b> ${arena() && t.pose ? t.pose : t.text}<small>${hint}</small><i class="prog"><i></i></i>`;
+  state.tutorial.prog = 0; state.tutorial.steps0 = stats.steps; state.tutorial.yaw0 = P.yaw; state.tutorial.x0 = P.pos.x; state.tutorial.jumps0 = stats.jumps;
   if (t.key === 'punch') {
     dummyHits = 0;
     const f = new THREE.Vector3(-Math.sin(P.yaw), 0, -Math.cos(P.yaw));
@@ -440,11 +514,11 @@ function showTutStep() {
   }
 }
 function tickTutorial(dt) {
-  const T = state.tutorial, t = TUT[T.i];
+  const T = state.tutorial, t = T.list[T.i];
   let v = 0;
   if (t.key === 'walk') v = stats.steps - T.steps0;
-  else if (t.key === 'left') v = Math.max(0, P.yaw - T.yaw0);
-  else if (t.key === 'right') v = Math.max(0, T.yaw0 - P.yaw);
+  else if (t.key === 'left') v = arena() ? Math.max(0, T.x0 - P.pos.x) : Math.max(0, P.yaw - T.yaw0);   // arena: geser 1 m
+  else if (t.key === 'right') v = arena() ? Math.max(0, P.pos.x - T.x0) : Math.max(0, T.yaw0 - P.yaw);
   else if (t.key === 'look') { T.prog = ctl.look > .45 ? T.prog + dt : Math.max(0, T.prog - dt); v = T.prog; }
   else if (t.key === 'punch') v = dummyHits;
   else if (t.key === 'block') { T.prog = ctl.block ? T.prog + dt : Math.max(0, T.prog - dt * .5); v = T.prog; }
@@ -455,9 +529,9 @@ function tickTutorial(dt) {
 }
 function nextTutStep() {
   sfx.check();
-  if (TUT[state.tutorial.i].key === 'punch') { debris.burst(dummy.root.position.clone().add(new THREE.Vector3(0, 1.3, 0)), 0xe8c34a, 24, 5); dummy.root.visible = false; }
+  if (state.tutorial.list[state.tutorial.i].key === 'punch') { debris.burst(dummy.root.position.clone().add(new THREE.Vector3(0, 1.3, 0)), 0xe8c34a, 24, 5); dummy.root.visible = false; }
   state.tutorial.i++;
-  if (state.tutorial.i >= TUT.length) { endTutorial(); return; }
+  if (state.tutorial.i >= state.tutorial.list.length) { endTutorial(); return; }
   showTutStep();
 }
 function endTutorial() {
@@ -473,9 +547,10 @@ function resetGame() {
   for (const it of items) scene.remove(it.mesh); items.length = 0;
   for (const f of [...dying]) removeFoe(f);
   for (const w of waves) wavePool.release(w.mesh); waves.length = 0;
-  Object.assign(P, { yaw: 0, turnVel: 0, flipT: 0, airJumps: 0, crouchT: 0, lastCrouch: 0, sinceCrouch: 9, vy: 0, onGround: true, hp: 5, invuln: 0, energy: 0, punchL: 0, punchR: 0, superFx: 0, hurtT: 0, speed: 0 });
+  Object.assign(P, { yaw: 0, yawWant: 0, turnVel: 0, flipT: 0, airJumps: 0, crouchT: 0, lastCrouch: 0, sinceCrouch: 9, vy: 0, onGround: true, hp: 5, invuln: 0, energy: 0, punchL: 0, punchR: 0, superFx: 0, hurtT: 0, speed: 0 });
   P.pos.set(0, groundAt(0, 4), 4);
-  Object.assign(stats, { steps: 0, punches: 0, jumps: 0, crouches: 0, kills: 0, gems: 0, active: 0, wave: 0 });
+  Object.assign(stats, { steps: 0, punches: 0, jumps: 0, crouches: 0, kills: 0, gems: 0, active: 0, wave: 0, bosses: 0 });
+  for (const sh of shocks) scene.remove(sh.m); shocks.length = 0; ui.boss.hidden = true; P.vel.set(0, 0, 0);
   Object.assign(state, { score: 0, wave: 0, queue: [], foesLeft: 0, elapsed: 0, breakT: 0 });
   motion.resetCounters();
   renderHearts(); ui.gems.textContent = 0; ui.wave.textContent = '–';
@@ -556,14 +631,14 @@ btnMute.addEventListener('click', toggleMute); mMute.addEventListener('click', t
 btnMusic.addEventListener('click', toggleMusic); mMusic.addEventListener('click', toggleMusic);
 syncSound();
 
-// mode anti pusing (bawaan: menyala): belok patah di mode kamera, putaran & lari lebih pelan
+// mode anti pusing (bawaan: menyala): putaran & lari lebih pelan (mode kamera selalu arena tanpa putaran)
 let comfort = true;
 try { comfort = localStorage.getItem('kotak.comfort') !== '0'; } catch {}
 const mComfort = $('m-comfort');
 const syncComfort = () => { mComfort.classList.toggle('off', !comfort); mComfort.title = comfort ? 'Anti pusing: NYALA' : 'Anti pusing: MATI'; };
 mComfort.addEventListener('click', () => {
   unlock(); comfort = !comfort; syncComfort(); sfx.check();
-  toast(comfort ? 'Anti pusing NYALA 🌀 — belok patah, gerak lebih pelan' : 'Anti pusing MATI — belok halus');
+  toast(comfort ? 'Anti pusing NYALA 🌀 — belok & gerak lebih pelan' : 'Anti pusing MATI — belok halus');
   try { localStorage.setItem('kotak.comfort', comfort ? '1' : '0'); } catch {}
 });
 syncComfort();
@@ -710,13 +785,47 @@ function updateFoeArrow() {
   let best = null, bd = 30;
   for (const f of foes) { const d = Math.hypot(f.pos.x - P.pos.x, f.pos.z - P.pos.z); if (d < bd) { bd = d; best = f; } }
   let show = '';
-  if (best && state.mode === 'play') {
+  if (best && state.mode === 'play' && arena()) {
+    // kamera arena tidak berputar: cek apakah monster terdekat ada di luar layar
+    const v = center(best, tmp2).project(camera);
+    const behind = v.z > 1, off = behind || Math.abs(v.x) > .92 || v.y < -1 || v.y > 1;
+    if (off) show = (behind ? -v.x : v.x) < 0 ? 'L' : 'R';
+  } else if (best && state.mode === 'play') {
     const want = Math.atan2(-(best.pos.x - P.pos.x), -(best.pos.z - P.pos.z));
     const diff = Math.atan2(Math.sin(want - P.yaw), Math.cos(want - P.yaw));
     if (Math.abs(diff) > .75) show = diff > 0 ? 'L' : 'R';
   }
   setClass(ui.foeArrow, 'on', !!show); setClass(ui.foeArrow, 'r', show === 'R');
   if (show) setText(ui.foeArrow, show === 'L' ? '◀ 👾' : '👾 ▶');
+}
+// Mode arena (kamera): sasaran otomatis = monster terdekat (atau orang-orangan latihan, atau permata).
+function arenaTarget() {
+  let best = null, bd = 18;
+  for (const f of foes) { const d = Math.hypot(f.pos.x - P.pos.x, f.pos.z - P.pos.z) - f.def.r; if (d < bd) { bd = d; best = f; } }
+  if (best) return { x: best.pos.x, z: best.pos.z, reach: best.def.r + (best.type === 'bat' ? 2 : 1.15) };
+  if (dummy.root.visible) return { x: dummy.root.position.x, z: dummy.root.position.z, reach: 1.9 };
+  let gem = null, gd = 14;
+  for (const it of items) { const d = Math.hypot(it.pos.x - P.pos.x, it.pos.z - P.pos.z); if (d < gd) { gd = d; gem = it; } }
+  return gem ? { x: gem.pos.x, z: gem.pos.z, reach: 0, item: true } : null;
+}
+function arenaMove(dt) {
+  const t = arenaTarget(), slow = ctl.crouch || ctl.block;
+  let vx = 0, vz = 0;
+  if (t) {
+    const dx = t.x - P.pos.x, dz = t.z - P.pos.z, d = Math.hypot(dx, dz);
+    if (!t.item || ctl.fwd > 0) P.yawWant = Math.atan2(-dx, -dz);            // selalu menghadap monster
+    if (ctl.fwd > 0 && d > t.reach && d > .05) { const sp = slow ? 1.2 : ctl.run ? 4.6 : 3.1; vx = dx / d * sp; vz = dz / d * sp; }
+  }
+  vx -= ctl.side * (slow ? 1.4 : 3.2);                                       // condong ke kiri pemain = kiri layar (-x)
+  const k = Math.min(1, dt * 6);
+  P.vel.x += (vx - P.vel.x) * k; P.vel.z += (vz - P.vel.z) * k;
+  moveBody(P, P.vel.x * dt, P.vel.z * dt);
+  const r = Math.hypot(P.pos.x, P.pos.z), lim = ARENA_R - .8;                 // tetap di arena (kamera membingkai arena)
+  if (r > lim) { P.pos.x *= lim / r; P.pos.z *= lim / r; }
+  P.speed = Math.hypot(P.vel.x, P.vel.z);
+  if (!t && P.speed > .5) P.yawWant = Math.atan2(-P.vel.x, -P.vel.z);
+  const dy = Math.atan2(Math.sin(P.yawWant - P.yaw), Math.cos(P.yawWant - P.yaw));
+  P.yaw += clamp(dy, -7 * dt, 7 * dt);
 }
 // jagoan menghadap kamera di menu (karakter menghadap -z lokal, jadi arah ke kamera dibalik)
 const menuFacing = () => Math.atan2(P.pos.x - camera.position.x, P.pos.z - camera.position.z);
@@ -727,12 +836,15 @@ function update(dt, now) {
 
   if (active) {
     // gerak pemain
-    turnPlayer(dt);
-    const runV = comfort ? 5 : 6.2, walkV = comfort ? 3 : 3.3;
-    const target = ctl.crouch || ctl.block ? Math.min(ctl.fwd, .5) * 2 : ctl.fwd * (ctl.run ? runV : walkV);
-    P.speed += (target - P.speed) * Math.min(1, dt * 3.5);       // mulai/berhenti pelan: perubahan laju memicu pusing
-    const fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw);
-    moveBody(P, fx * P.speed * dt, fz * P.speed * dt);
+    if (arena()) arenaMove(dt);
+    else {
+      turnPlayer(dt);
+      const runV = comfort ? 5 : 6.2, walkV = comfort ? 3 : 3.3;
+      const target = ctl.crouch || ctl.block ? Math.min(ctl.fwd, .5) * 2 : ctl.fwd * (ctl.run ? runV : walkV);
+      P.speed += (target - P.speed) * Math.min(1, dt * 3.5);       // mulai/berhenti pelan: perubahan laju memicu pusing
+      const fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw);
+      moveBody(P, fx * P.speed * dt, fz * P.speed * dt);
+    }
     // jongkok yang baru selesai (≤0.45 dtk) atau masih ditahan → lompatan berikutnya jadi LOMPAT TINGGI
     if (ctl.crouch && P.onGround) P.crouchT += dt;
     else if (P.wasCrouch) { P.lastCrouch = P.crouchT; P.sinceCrouch = 0; P.crouchT = 0; }
@@ -764,7 +876,8 @@ function update(dt, now) {
     punchL: P.punchL, punchR: P.punchR, block: !menu && ctl.block, crouch: !menu && ctl.crouch && P.onGround,
     flip: P.flipT > 0 ? 1 - P.flipT / .5 : 0,
     raise: (posed && s.raise) || (menu && showoff.raise > 0), slam: P.superFx, hurt: P.hurtT / .35,
-    headYaw: ctl.source === 'pose' && !menu ? ctl.turn * .5 : menu ? Math.sin(now * .0007) * .25 : 0, headPitch: menu ? 0 : ctl.look,
+    headYaw: menu ? Math.sin(now * .0007) * .25 : 0, headPitch: menu ? 0 : ctl.look,
+    mirror: posed && P.hp > 0 ? s.arms : null,
   }, dt);
   hero.root.visible = P.invuln <= 0 || Math.floor(now / 90) % 2 === 0;
   // debu kecil di setiap jejak saat berlari
@@ -792,6 +905,7 @@ function update(dt, now) {
   if (active) updateFoes(dt, now);
   updateDying(dt);
   updateWaves(dt);
+  updateShocks(dt);
   updateItems(dt);
   debris.update(dt);
 
@@ -804,6 +918,7 @@ function update(dt, now) {
     setStyle(ui.energy, 'width', `${Math.round(P.energy)}%`); setClass(ui.energyBox, 'full', P.energy >= 100);
     setText(ui.gesture, ctl.source === 'pose' ? ui.camStatus.textContent : ctl.block ? 'perisai 🛡️' : ctl.crouch ? 'jongkok 🙇' : ctl.run && ctl.fwd > 0 ? 'lari 🏃' : ctl.fwd > 0 ? 'jalan 🚶' : 'siap 🙂');
     setStyle(ui.reticle, 'transform', `translate(-50%, ${Math.round(-50 - ctl.look * 60)}%)`);
+    setStyle(ui.reticle, 'display', arena() ? 'none' : '');
   }
 
   updateCamera(dt);
@@ -861,7 +976,8 @@ function updateFoes(dt, now) {
         speed: f.speed, onGround: f.onGround, zombie: true, hurt: f.hurtT / .3,
         windup: f.state === 'windup' ? clamp(1 - f.timer / .8, 0, 1) : 0, swing: f.atkT,
       }, dt);
-    } else if (f.type === 'bat') {
+    } else if (f.type === 'boss') updateBoss(f, dt, to, dist);
+    else if (f.type === 'bat') {
       const g = groundAt(f.pos.x, f.pos.z);
       f.timer -= dt;
       let tilt = 0;
@@ -892,12 +1008,13 @@ function updateFoes(dt, now) {
       f.rig.body.position.y = -Math.sin(f.flapT + f.phase) * .08;
       f.rig.body.rotation.x += (tilt + f.hurtT * 1.5 - f.rig.body.rotation.x) * Math.min(1, dt * 8);
     }
+    if (f.type !== 'bat' && f.type !== 'boss') unstick(f, dt, dist);
     f.rig.root.position.copy(f.pos);
     // muncul: membesar dengan sedikit memantul
     const bs = f.rig.baseScale * (f.born < .4 ? Math.max(.01, easeOutBack(f.born / .4)) : 1);
     f.rig.root.scale.setScalar(bs);
     // gemetar = tanda mau menyerang (beri anak waktu untuk menangkis / jongkok)
-    if (f.state === 'windup' || f.state === 'warn') { f.rig.root.position.x += Math.sin(now * .07) * .06; f.rig.root.position.y += Math.abs(Math.sin(now * .05)) * .06; }
+    if (f.state === 'windup' || f.state === 'warn' || (f.type === 'boss' && f.state.endsWith('Wind'))) { f.rig.root.position.x += Math.sin(now * .07) * .06; f.rig.root.position.y += Math.abs(Math.sin(now * .05)) * .06; }
     f.rig.root.rotation.y = f.yaw;
     // bayangan bulat: mengecil saat makhluk tinggi di udara
     const gy = groundAt(f.pos.x, f.pos.z), hgt = Math.max(0, f.pos.y - gy);
@@ -912,6 +1029,93 @@ function updateFoes(dt, now) {
       const dx = f.pos.x - o.pos.x, dz = f.pos.z - o.pos.z, d = Math.hypot(dx, dz), min = f.def.r + o.def.r;
       if (d > 0 && d < min) moveBody(f, dx / d * (min - d) * .5, dz / d * (min - d) * .5);
     }
+  }
+}
+
+// --- Bos Raja Batu ---
+// Setiap serangan diawali ancang-ancang yang jelas (gemetar + petunjuk), dan tiap serangan dilawan dengan
+// gerakan badan yang berbeda: hentakan → LOMPAT, pukulan → JONGKOK/PERISAI, serudukan → CONDONG ke samping.
+// Habis menyeruduk / kena tangkis, bos pusing (bintang berputar) dan pukulan bernilai 2×.
+const BOSS_TIPS = { slam: 'Bos mau menghentak — LOMPAT! 🦘', swing: 'Pukulan bos — JONGKOK atau PERISAI! 🙇🛡️', charge: 'Bos mau menyeruduk — CONDONG ke samping! ↔️' };
+function bossAttack(f, kind, q) {
+  f.state = kind + 'Wind'; f.timer = { slam: 1.35, swing: .95, charge: 1.0 }[kind] * q; f.wind = f.timer; sfx.warn();
+  const n = (f.told[kind] || 0); if (n < 2) { f.told[kind] = n + 1; toast(BOSS_TIPS[kind], 1500); }
+}
+function updateBoss(f, dt, to, dist) {
+  const rage = f.hp <= f.maxHp / 2, q = rage ? .8 : 1;
+  const face = Math.atan2(-to.x, -to.z), turnTo = (rate) => { f.yaw += clamp(Math.atan2(Math.sin(face - f.yaw), Math.cos(face - f.yaw)), -rate * dt, rate * dt); };
+  let walking = false, raise = false, windup = 0;
+  f.timer -= dt; f.cd -= dt;
+  if (rage && !f.enraged) {
+    f.enraged = true; ui.boss.classList.add('rage'); sfx.boss(); toast('Raja Batu MARAH! 😤', 1500);
+    for (let i = 0; i < 2; i++) spawnFoe('slime'); state.foesLeft += 2;
+  }
+  if (f.state === 'intro') {
+    if (f.onGround && !f.landed) { f.landed = true; f.timer = 1.1; sfx.slam(); shockwave(f.pos, false); debris.burst(f.pos.clone().setY(f.pos.y + .3), 0x9ea3ab, 30, 8, .22); }
+    if (f.landed && f.timer <= 0) { f.state = 'chase'; f.cd = 1.2; }
+  } else if (f.state === 'chase') {
+    turnTo(3);
+    if (f.cd <= 0) bossAttack(f, dist < 3.4 ? (Math.random() < .6 ? 'swing' : 'slam') : dist > 5.5 ? (Math.random() < .5 ? 'charge' : 'slam') : 'slam', q);
+    else if (dist > 2.7) {
+      const step = f.def.speed * (rage ? 1.3 : 1) * dt;
+      if (!moveBody(f, -Math.sin(f.yaw) * step, -Math.cos(f.yaw) * step)) moveBody(f, -Math.sin(f.yaw + 1.2) * step, -Math.cos(f.yaw + 1.2) * step);
+      walking = true;
+    }
+  } else if (f.state === 'slamWind') {
+    raise = true;
+    if (f.timer <= 0) { f.state = 'slam'; f.timer = .5; sfx.slam(); shockwave(f.pos, true); debris.burst(f.pos.clone().setY(f.pos.y + .3), 0xcbb991, 24, 7, .18); }
+  } else if (f.state === 'slam') {
+    if (f.timer <= 0) { f.state = 'recover'; f.timer = 1.1; }
+  } else if (f.state === 'swingWind') {
+    turnTo(2.5); windup = clamp(1 - f.timer / f.wind, 0, 1);
+    if (f.timer <= 0) {
+      f.state = 'recover'; f.timer = 1.1; f.atkT = 0;
+      const dodged = (ctl.crouch && P.onGround) || P.pos.y - groundAt(P.pos.x, P.pos.z) > .9;   // pukulan setinggi dada
+      if (dist < 3.7 && !dodged) {
+        const r = damagePlayer(f.pos, 'Kena pukulan bos!');
+        if (r === 'blocked') { f.state = 'dizzy'; f.timer = 1.6; toast('TANGKIS! Bos pusing — pukul! 💫', 1400); }
+      } else if (dist < 3.7) toast('Lolos! 👍', 800);
+    }
+  } else if (f.state === 'chargeWind') {
+    turnTo(4);
+    if (f.timer <= 0) { f.state = 'charge'; f.timer = 1.7; f.hitP = false; f.cdir = new THREE.Vector3(-Math.sin(f.yaw), 0, -Math.cos(f.yaw)); sfx.jump(); }
+  } else if (f.state === 'charge') {
+    const step = (rage ? 10 : 8.5) * dt, moved = moveBody(f, f.cdir.x * step, f.cdir.z * step);
+    walking = true;
+    if (!f.hitP && dist < f.def.r + .7) { f.hitP = true; damagePlayer(f.pos, 'Diseruduk bos!', true); }
+    if (f.timer <= 0 || !moved || Math.hypot(f.pos.x, f.pos.z) > ARENA_R - 1.3) {
+      f.state = 'dizzy'; f.timer = rage ? 1.7 : 2.3; sfx.poof(); debris.burst(center(f), 0xffffff, 14, 4);
+      if (!f.toldDizzy) { f.toldDizzy = true; toast('Bos pusing — pukul sekarang! 💫 (2×)', 1500); }
+    }
+  } else if (f.state === 'dizzy') {
+    if (f.timer <= 0) { f.state = 'chase'; f.cd = .9; }
+  } else if (f.state === 'recover') {
+    if (f.timer <= 0) { f.state = 'chase'; f.atkT = -1; f.cd = (rage ? 1.1 : 1.9) + Math.random() * .8; }
+  }
+  physicsY(f, dt);
+  f.rig.stars.visible = f.state === 'dizzy';
+  if (f.rig.stars.visible) f.rig.stars.rotation.y += dt * 5;
+  f.speed += ((f.state === 'charge' ? 9 : walking ? f.def.speed * 1.6 : 0) - f.speed) * Math.min(1, dt * 8);
+  animateHumanoid(f.rig, {
+    speed: f.speed, onGround: f.onGround, zombie: f.state === 'chase' || f.state === 'charge', hurt: f.hurtT / .3 * .4,
+    windup, swing: f.atkT, raise, slam: f.state === 'slam' ? Math.max(.01, f.timer * .7) : 0,
+    headPitch: f.state === 'dizzy' ? Math.sin(f.timer * 9) * .3 : 0,
+  }, dt);
+}
+// gelombang kejut hentakan bos: cincin yang melebar di tanah, hanya bisa dihindari dengan melompat
+const shocks = [];
+const shockGeo = new THREE.RingGeometry(.8, 1, 64);
+function shockwave(at, harmful) {
+  const m = new THREE.Mesh(shockGeo, new THREE.MeshBasicMaterial({ color: harmful ? 0xff8a3c : 0xffffff, transparent: true, opacity: .85, side: THREE.DoubleSide, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2; m.position.set(at.x, groundAt(at.x, at.z) + .08, at.z); scene.add(m);
+  shocks.push({ m, c: at.clone(), r: 1, hit: !harmful, max: harmful ? 13 : 6 });
+}
+function updateShocks(dt) {
+  for (const sh of [...shocks]) {
+    sh.r += dt * 7.5; sh.m.scale.setScalar(sh.r); sh.m.material.opacity = .85 * Math.max(0, 1 - sh.r / sh.max);
+    const d = Math.hypot(P.pos.x - sh.c.x, P.pos.z - sh.c.z);
+    if (!sh.hit && Math.abs(d - sh.r) < .55 && P.pos.y - groundAt(P.pos.x, P.pos.z) < .35) { sh.hit = true; damagePlayer(sh.c, 'Kena gelombang! Lompat ya 🦘', true); }
+    if (sh.r >= sh.max) { scene.remove(sh.m); sh.m.material.dispose(); shocks.splice(shocks.indexOf(sh), 1); }
   }
 }
 
@@ -972,6 +1176,7 @@ function updateCamera(dt) {
     camera.lookAt(camLook); return;
   }
   menuCamInit = false;
+  if (arena()) { arenaCamera(dt); return; }
   // kamera bahu yang agak tinggi: jagoan di bawah, monster di depan tetap terlihat di atas kepalanya
   const cp = .44 - ctl.look * .4;                         // dongak → kamera sedikit turun & melihat ke atas
   const d = 5.8;
@@ -993,6 +1198,19 @@ function updateCamera(dt) {
   P.snapped = false;
   camera.position.copy(camPos);
   camLook.set(target.x - bx * 8, target.y + ctl.look * 8 - .1, target.z - bz * 8);
+  camera.lookAt(camLook);
+}
+
+// Kamera arena: arah TETAP (tidak pernah berputar = tidak memicu pusing), tinggi di belakang jagoan,
+// mengikuti posisinya pelan-pelan. Dekat tepi selatan kamera naik & lebih tegak supaya pohon tidak menghalangi.
+function arenaCamera(dt) {
+  const portrait = innerHeight > innerWidth, south = clamp(P.pos.z / ARENA_R, 0, 1);
+  // HP tegak: titik pandang lebih jauh ke depan → jagoan di sepertiga bawah, arena di depannya terlihat
+  const back = (portrait ? 9.5 : 8.4) * (1 - south * .35), up = (portrait ? 7.2 : 6.6) + south * 3;
+  camWant.set(P.pos.x, P.pos.y + up, P.pos.z + back);
+  camPos.lerp(camWant, Math.min(1, dt * 3));
+  camera.position.copy(camPos);
+  camLook.set(P.pos.x, P.pos.y + .9, P.pos.z - (portrait ? 7 : 3));
   camera.lookAt(camLook);
 }
 
@@ -1046,4 +1264,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-if (DEBUG) window.__game = { state, P, stats, ctl, motion, foes, dying, items, hero, camera, handlePose, spawnFoe, beginGame, startWave, renderer, scene, keys, punch, superSlam, endTutorial, wardrobe, gameOver, applyLook, setSource: (s) => (ctl.source = s) };
+if (DEBUG) window.__game = { state, P, stats, ctl, motion, foes, dying, items, hero, camera, handlePose, spawnFoe, spawnPoint, shocks, killFoe, hurtFoe, beginGame, startWave, renderer, scene, keys, punch, superSlam, endTutorial, wardrobe, gameOver, applyLook, setSource: (s) => (ctl.source = s) };

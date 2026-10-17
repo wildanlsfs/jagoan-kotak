@@ -4,10 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Jagoan Kotak</title>
-  <meta name="description" content="Game petualangan 3D dunia kotak yang dimainkan dengan gerakan badan: jalan di tempat untuk maju, toleh kepala untuk belok, tinju untuk melawan monster kotak. Bikin anak aktif bergerak!" />
+  <meta name="description" content="Game petualangan 3D dunia kotak yang dimainkan dengan gerakan badan: jalan di tempat untuk maju, condongkan badan untuk menghindar, tinju untuk melawan monster kotak dan bos Raja Batu. Bikin anak aktif bergerak!" />
   <meta name="theme-color" content="#6cc04a" />
   <meta property="og:title" content="Jagoan Kotak — main game sambil bergerak" />
-  <meta property="og:description" content="Jalan di tempat, toleh, tinju, lompat di depan webcam. Gratis, langsung di browser." />
+  <meta property="og:description" content="Jalan di tempat, condong, tinju, lompat di depan webcam. Gratis, langsung di browser." />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet" />
@@ -48,6 +48,7 @@
       <div class="pill gesture" id="gesture">—</div>
     </div>
   </div>
+  <div id="boss" hidden><div class="boss-name">👑 RAJA BATU <small id="boss-lv"></small></div><div class="boss-bar"><i id="boss-lag"></i><i id="boss-fill"></i></div></div>
   <div id="prompt" hidden><div id="prompt-text"></div><button id="prompt-skip">Lewati ⏭</button></div>
   <div id="toast" aria-live="polite"></div>
 
@@ -102,9 +103,9 @@
       <h2>Cara main 🕹️</h2>
       <p class="lead">Berdiri ±2 meter dari kamera sampai <b>badan terlihat dari kepala sampai lutut</b>.</p>
       <ul class="moves" aria-label="Gerakan">
-        <li><i>👣</i><b>Jalan di tempat</b><span>maju · cepat = lari</span></li>
-        <li><i>↔️</i><b>Toleh / miringkan badan</b><span>belok kiri / kanan</span></li>
-        <li><i>☁️</i><b>Dongak</b><span>lihat & bidik ke atas</span></li>
+        <li><i>👣</i><b>Jalan di tempat</b><span>dekati monster · cepat = lari</span></li>
+        <li><i>↔️</i><b>Condongkan badan</b><span>geser kiri / kanan</span></li>
+        <li><i>🎯</i><b>Tidak perlu belok</b><span>jagoan otomatis menghadap monster</span></li>
         <li><i>👊</i><b>Tinju ke depan</b><span>pukulan angin</span></li>
         <li><i>🛡️</i><b>Tangan di depan wajah</b><span>perisai</span></li>
         <li><i>🦘</i><b>Lompat</b><span>lompat sungguhan</span></li>
@@ -116,6 +117,7 @@
       <div class="tips">
         <p>⚡ <b>Energi jurus</b> terisi dari langkah kaki, pukulan, dan tangkisan.</p>
         <p>👾 Monster yang <b>gemetar</b> sedang bersiap menyerang. Tangkis atau menghindar!</p>
+        <p>👑 Tiap gelombang ke-5 datang <b>bos Raja Batu</b>: hentakan → lompat, pukulan → jongkok/perisai, serudukan → condong ke samping. Habis menyeruduk dia pusing: pukulanmu 2× lebih kuat!</p>
         <p>🌀 <b>Pusing?</b> Nyalakan tombol 🌀 (anti pusing), main di ruangan terang, layar sejajar mata ±2 m, dan istirahat tiap selesai gelombang.</p>
         <p>⌨️ Keyboard: W jalan · Shift lari · A/D belok · Q dongak · J/K tinju · L perisai · Spasi lompat (2× di udara = ganda, tahan C dulu = tinggi) · C jongkok · U jurus</p>
       </div>

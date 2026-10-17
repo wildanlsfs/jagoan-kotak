@@ -1,21 +1,36 @@
 // Pembaca gerakan tubuh dari landmark MediaPipe Pose.
 //   jalan di tempat (angkat lutut bergantian) -> jalan; cepat -> lari
-//   toleh kiri/kanan ATAU miringkan badan kiri/kanan -> belok;  dongak/tunduk -> lihat atas/bawah
+//   miringkan badan kiri/kanan -> geser kiri/kanan (mode arena; mata tetap ke layar)
+//   (cadangan lama: toleh kepala -> belok;  dongak/tunduk -> lihat atas/bawah)
 //   (lutut tidak terlihat? langkah dibaca dari goyangan naik-turun badan)
 //   dorong tangan ke depan cepat -> tinju (kiri/kanan)
 //   kedua tangan di depan wajah -> perisai;  kedua tangan ke atas -> jurus super
 //   lompat sungguhan -> lompat;  jongkok -> merunduk
+//   lengan & bahu pemain ditiru langsung oleh jagoan (hibrida: kaki tetap animasi game)
 // Fungsi di sini murni (tanpa DOM) supaya bisa diuji dengan landmark buatan.
 
 const L = { nose: 0, earL: 7, earR: 8, shL: 11, shR: 12, elL: 13, elR: 14, wrL: 15, wrR: 16, hipL: 23, hipR: 24, kneeL: 25, kneeR: 26 };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/** Filter One-Euro: halus saat diam (getaran hilang), cepat saat bergerak (tidak terasa telat). */
+function oneEuro(minCut = 1.2, beta = .9, dCut = 1) {
+  let x = null, dx = 0;
+  const alpha = (cut, dt) => 1 / (1 + 1 / (2 * Math.PI * cut * dt));
+  return (v, dt) => {
+    if (x === null) { x = v; return v; }
+    dx += ((v - x) / dt - dx) * alpha(dCut, dt);
+    x += (v - x) * alpha(minCut + beta * Math.abs(dx), dt);
+    return x;
+  };
+}
 
 export function createMotion() {
   const st = {
     ok: false, others: 0, kneesVisible: true,
     // hasil
     steps: 0, stepRate: 0, moving: false, run: false, kneeL: 0, kneeR: 0, bobSteps: false,
-    turn: 0, look: 0, block: false, crouch: false, raise: false, raiseHeld: 0,
+    turn: 0, side: 0, look: 0, block: false, crouch: false, raise: false, raiseHeld: 0,
+    arms: null,                                 // { L: {x, z}, R: {x, z}, roll } sudut lengan & bahu untuk ditiru jagoan
     // dasar kalibrasi
     base: null,
   };
@@ -29,6 +44,8 @@ export function createMotion() {
   let calib = [];
   let leanS = 0;                                // kemiringan badan yang dihaluskan
   const bob = { fast: null, slow: 0, up: false }; // goyangan badan untuk langkah tanpa lutut
+  const armF = { L: [oneEuro(), oneEuro(), oneEuro()], R: [oneEuro(), oneEuro(), oneEuro()], roll: oneEuro(1, .5) };
+  const armSeen = { L: 0, R: 0 };               // 0..1, naik saat lengan terlihat jelas (transisi halus)
 
   const aspectOf = (o) => o.aspect || 4 / 3;
 
@@ -85,7 +102,7 @@ export function createMotion() {
     const ev = { step: false, punchL: false, punchR: false, jump: false };
     const i = pick(all, now);
     st.others = all.length - (i >= 0 ? 1 : 0);
-    if (i < 0) { st.ok = false; st.moving = false; st.block = false; st.crouch = false; st.turn = 0; return ev; }
+    if (i < 0) { st.ok = false; st.moving = false; st.block = false; st.crouch = false; st.turn = 0; st.side = 0; st.arms = null; return ev; }
     const lm = all[i], wl = allWorld[i] || null, aspect = aspectOf(opts);
     const m = measure(lm, aspect);
     st.ok = true; st.kneesVisible = m.kneesVisible;
@@ -137,6 +154,7 @@ export function createMotion() {
     leanS += (m.lean - (B.lean || 0) - leanS) * Math.min(1, dt * 6);   // haluskan goyangan badan saat melangkah
     st.lean = leanS;
     st.turn = clamp(ramp(yaw, .1, .36) + ramp(leanS, .12, .3), -1, 1);
+    st.side = ramp(leanS, .1, .26);                           // mode arena: hanya condong badan (kepala bebas melihat layar)
     const pitch = m.pitch - B.pitch;
     const target = Math.abs(pitch) < .1 ? 0 : clamp((pitch - Math.sign(pitch) * .1) / .3, -.6, 1);
     st.look += (target - st.look) * Math.min(1, dt * 4);      // pelan: getaran kepala tidak menggoyang kamera
@@ -182,6 +200,13 @@ export function createMotion() {
       }
     }
 
+    // 3b) tiru lengan: arah bahu→pergelangan diubah ke ruang jagoan (jagoan dilihat dari belakang, jadi
+    //     lengan kiri pemain = lengan kiri jagoan di sisi kiri layar, seperti cermin).
+    //     Landmark dunia: x+ = kiri pemain, y+ = bawah, z- = ke arah kamera (= depan jagoan).
+    //     Jagoan: kiri = -x, atas = +y, depan = -z. Lengan berporos di bahu, menggantung ke -y:
+    //     arah d = (sin z, -cos z·cos x, -cos z·sin x)  →  z = asin(dx), x = atan2(-dz, -dy).
+    st.arms = mirrorArms(lm, wl, aspect, dt);
+
     // 4) lompat & jongkok dari tinggi pinggul (relatif panjang badan)
     const up = (B.hy - m.hy) / T;
     if (jumpArmed && up > .2 && st.kneeL < .6 && st.kneeR < .6) { jumpArmed = false; ev.jump = true; }
@@ -195,6 +220,35 @@ export function createMotion() {
       st.base.T += (m.T - st.base.T) * .02;
     }
     return ev;
+  }
+
+  function mirrorArms(lm, wl, aspect, dt) {
+    const vis = (j) => (lm[j].visibility === undefined ? 1 : lm[j].visibility);
+    const out = { L: null, R: null, roll: 0 };
+    const pt = (j) => (wl ? wl[j] : { x: lm[j].x * aspect, y: lm[j].y, z: 0 }); // tanpa landmark dunia: 2D saja
+    for (const side of ['L', 'R']) {
+      const sI = side === 'L' ? L.shL : L.shR, eI = side === 'L' ? L.elL : L.elR, wI = side === 'L' ? L.wrL : L.wrR;
+      const seen = vis(eI) > .5 && vis(wI) > .5;
+      armSeen[side] = clamp(armSeen[side] + (seen ? dt * 4 : -dt * 3), 0, 1);
+      if (!seen && !armSeen[side]) continue;
+      if (seen) {
+        const s = pt(sI), w = pt(wI);
+        let dx = -(w.x - s.x), dy = -(w.y - s.y), dz = (w.z - s.z) * .85;   // kedalaman sedikit diredam (paling bergetar)
+        const n = Math.hypot(dx, dy, dz) || 1;
+        const f = armF[side];
+        dx = f[0](dx / n, dt); dy = f[1](dy / n, dt); dz = f[2](dz / n, dt);
+        const m = Math.hypot(dx, dy, dz) || 1; dx /= m; dy /= m; dz /= m;
+        let x = Math.atan2(-dz, -dy);
+        if (x < -Math.PI / 2) x += Math.PI * 2;                               // tangan lurus ke atas: jangan melompat dari +π ke -π
+        armSeen[side + 'v'] = { x, z: Math.asin(clamp(dx, -1, 1)) };
+      }
+      if (armSeen[side + 'v']) out[side] = { ...armSeen[side + 'v'], w: armSeen[side] };
+    }
+    if (vis(L.shL) > .5 && vis(L.shR) > .5) {
+      const a = pt(L.shL), b = pt(L.shR);
+      out.roll = armF.roll(clamp(Math.atan2(-(b.y - a.y), -(b.x - a.x)), -.5, .5), dt); // + = bahu kanan lebih tinggi
+    }
+    return out.L || out.R ? out : null;
   }
 
   function startCalibration() { calib = []; track = null; lostSince = 0; }

@@ -53,6 +53,18 @@ html, body { margin: 0; height: 100%; background: var(--sky); color: var(--ink);
 #hurt.on { animation: hurt .5s ease-out; }
 @keyframes hurt { from { opacity: 1; } to { opacity: 0; } }
 /* panah ke monster di luar layar (pengganti kamera yang berputar sendiri) */
+/* bar nyawa bos */
+#boss { position: fixed; top: calc(max(10px, env(safe-area-inset-top)) + 104px); left: 50%; transform: translateX(-50%); width: min(520px, calc(100vw - 32px)); z-index: 11; pointer-events: none; text-align: center; }
+#boss[hidden] { display: none; }
+.boss-name { color: #fff; font-weight: 800; font-size: 18px; letter-spacing: .05em; text-shadow: 0 2px 0 rgba(0, 0, 0, .4); margin-bottom: 5px; }
+.boss-name small { font-size: 13px; opacity: .85; margin-left: 4px; }
+.boss-bar { position: relative; height: 18px; border-radius: 10px; background: rgba(30, 22, 60, .65); border: 3px solid #fff; overflow: hidden; box-shadow: 0 3px 0 rgba(0, 0, 0, .25); }
+.boss-bar i { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; }
+#boss-lag { background: #fff3b0; transition: width .6s ease .3s; }
+#boss-fill { background: linear-gradient(#ff8a5c, #e2412f); transition: width .12s; }
+#boss.rage #boss-fill { background: linear-gradient(#ff5d8f, #b5179e); }
+#boss.rage .boss-bar { animation: boss-pulse .9s ease-in-out infinite; }
+@keyframes boss-pulse { 50% { box-shadow: 0 0 0 4px rgba(255, 93, 143, .45), 0 3px 0 rgba(0, 0, 0, .25); } }
 #foe-arrow { position: fixed; top: 46%; left: 12px; z-index: 8; pointer-events: none; transform: translateY(-50%); padding: 8px 12px; border-radius: 14px; background: rgba(30, 22, 60, .55); color: #fff; font-weight: 800; font-size: 20px; line-height: 1; opacity: 0; transition: opacity .25s; }
 #foe-arrow.on { opacity: 1; animation: arrow-nudge 1.1s ease-in-out infinite; }
 #foe-arrow.r { left: auto; right: 12px; animation-name: arrow-nudge-r; }
@@ -108,6 +120,8 @@ h2 { margin: 0 0 6px; font-size: 28px; }
 #summary small { font-size: 11px; color: var(--muted); line-height: 1.1; }
 
 @media (max-width: 560px) {
+  #boss { top: calc(max(10px, env(safe-area-inset-top)) + 86px); }
+  .boss-name { font-size: 15px; }
   .pill { font-size: 15px; padding: 6px 9px; }
   #hearts i { width: 14px; height: 13px; }
   .pill.steps, .pill.foes, .pill.wave small { display: none; }

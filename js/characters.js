@@ -164,11 +164,13 @@ export function animateHumanoid(r, s, dt) {
   if (s.hurt) lean += .5 * s.hurt;
   const twist = (eR - eL) * .45 + Math.sin(a.phase) * .1 * a.amp * (knees ? 0 : 1);
   to(r.upper, 'x', lean, kq); to(r.upper, 'y', twist, kq);
+  to(r.upper, 'z', s.mirror && !flip ? s.mirror.roll * .6 : 0, k);                    // bahu miring mengikuti pemain
 
   // ---- lengan
   const arm = (o, sx, ext, other, legSw) => {
     if (ext > 0) { o.rotation.x = .2 + ext * 1.42; o.rotation.z = -sx * .1 * ext; return; } // tinju lurus ke depan
     let x, z;
+    const mir = s.mirror && !slamUp && !slamDown && !flip ? s.mirror[sx < 0 ? 'L' : 'R'] : null;
     if (s.block) { x = 1.95; z = -sx * .62; }                                              // silang di depan wajah
     else if (slamUp || s.raise) { x = 2.95; z = sx * .28; }                                // tangan ke atas
     else if (slamDown) { x = .55; z = sx * .55; }
@@ -180,6 +182,7 @@ export function animateHumanoid(r, s, dt) {
     else if (other > 0) { x = .75; z = -sx * .28; }                                        // tangan lain menjaga
     else if (s.crouch) { x = .95; z = -sx * .1; }
     else { x = -clamp(legSw, -.85, .85) * (.95 + .35 * gait); z = sx * (.05 + Math.sin(a.t * 2.2) * .02); }               // berayun berlawanan dengan kaki
+    if (mir) { x += (mir.x - x) * mir.w; z += (mir.z - z) * mir.w; }                      // hibrida: tiru lengan pemain
     to(o, 'x', x, kq); to(o, 'z', z, kq);
   };
   arm(r.armL, -1, eL, eR, lL);
@@ -207,6 +210,21 @@ export function makeHero() {
 /** Monster kotak (tanpa wajah): kulit hijau-limau, baju ungu; level 2 berbaju merah & bertopi. */
 export function makeBrute(level = 1) {
   return makeHumanoid({ skin: 0x8fd16a, shirt: level > 1 ? 0xd65b5b : 0x8e6bd6, pants: 0x3b3355, hair: null, hat: level > 1 ? 0x2d2d3a : null, scale: level > 1 ? 1.15 : 1 });
+}
+
+/**
+ * Bos Raja Batu: manusia kotak raksasa dari batu, bermahkota emas, permata menyala di dada, bantalan bahu.
+ * Tetap TANPA WAJAH. `stars` = bintang kecil berputar di atas kepala saat bos pusing.
+ */
+export function makeBoss() {
+  const r = makeHumanoid({ skin: 0x9ea3ab, shirt: 0x5d6472, pants: 0x3d424d, hair: null, shoes: 0x2e323a, hat: 0xffc83d, scale: 2.3 });
+  const gold = mat(0xffc83d);
+  for (const x of [-.24, 0, .24]) for (const z of [-.24, 0, .24]) if (x || z) put(r.headPivot, block(.1, .16, .1, gold, .68)).position.set(x, .68, z); // gerigi mahkota
+  put(r.upper, block(.18, .18, .06, mat(0xff7a3c, { emissive: 0xff5a1a, emissiveIntensity: .7 }), .46)).position.z = -.14; // permata dada (depan = -z)
+  for (const sx of [-1, 1]) put(r.upper, block(.34, .14, .34, mat(0x7b828f), .76)).position.x = sx * .37;                 // bantalan bahu
+  r.stars = put(r.root, new THREE.Group()); r.stars.position.y = 2.55; r.stars.visible = false;
+  for (let i = 0; i < 3; i++) { const st = block(.13, .13, .13, gold); const a = i / 3 * Math.PI * 2; st.position.set(Math.cos(a) * .38, 0, Math.sin(a) * .38); r.stars.add(st); }
+  return r;
 }
 
 /** Slime kubus tembus pandang dengan inti gelap (tanpa wajah). */
