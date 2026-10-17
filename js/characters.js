@@ -182,6 +182,8 @@ export function animateHumanoid(r, s, dt) {
     else if (other > 0) { x = .75; z = -sx * .28; }                                        // tangan lain menjaga
     else if (s.crouch) { x = .95; z = -sx * .1; }
     else { x = -clamp(legSw, -.85, .85) * (.95 + .35 * gait); z = sx * (.05 + Math.sin(a.t * 2.2) * .02); }               // berayun berlawanan dengan kaki
+    const ov = s.arms && s.arms[sx < 0 ? 'L' : 'R'];                                        // pose khusus (membidik, merapal)
+    if (ov) { x = ov[0]; z = ov[1]; }
     if (mir) { x += (mir.x - x) * mir.w; z += (mir.z - z) * mir.w; }                      // hibrida: tiru lengan pemain
     to(o, 'x', x, kq); to(o, 'z', z, kq);
   };
@@ -222,10 +224,101 @@ export function makeBoss() {
   for (const x of [-.24, 0, .24]) for (const z of [-.24, 0, .24]) if (x || z) put(r.headPivot, block(.1, .16, .1, gold, .68)).position.set(x, .68, z); // gerigi mahkota
   put(r.upper, block(.18, .18, .06, mat(0xff7a3c, { emissive: 0xff5a1a, emissiveIntensity: .7 }), .46)).position.z = -.14; // permata dada (depan = -z)
   for (const sx of [-1, 1]) put(r.upper, block(.34, .14, .34, mat(0x7b828f), .76)).position.x = sx * .37;                 // bantalan bahu
-  r.stars = put(r.root, new THREE.Group()); r.stars.position.y = 2.55; r.stars.visible = false;
-  for (let i = 0; i < 3; i++) { const st = block(.13, .13, .13, gold); const a = i / 3 * Math.PI * 2; st.position.set(Math.cos(a) * .38, 0, Math.sin(a) * .38); r.stars.add(st); }
+  addStars(r, 2.55);
   return r;
 }
+/** Bintang kecil berputar di atas kepala (bos pusing). y dalam satuan lokal sebelum skala. */
+function addStars(r, y) {
+  const gold = mat(0xffc83d);
+  r.stars = put(r.root, new THREE.Group()); r.stars.position.y = y; r.stars.visible = false;
+  for (let i = 0; i < 3; i++) { const st = block(.13, .13, .13, gold); const a = i / 3 * Math.PI * 2; st.position.set(Math.cos(a) * .38, 0, Math.sin(a) * .38); r.stars.add(st); }
+}
+const crown = (head, y = .68) => { const gold = mat(0xffc83d); for (const x of [-.24, 0, .24]) for (const z of [-.24, 0, .24]) if (x || z) put(head, block(.1, .16, .1, gold, y)).position.set(x, y, z); };
+
+/**
+ * Tengkorak: tulang gading, rongga dada gelap dengan tulang rusuk, lengan & kaki kurus.
+ * Kepala tengkorak POLOS (tanpa lubang mata — semua karakter tanpa wajah).
+ *  - pedang (bawaan): helm besi + pedang di tangan kanan
+ *  - archer: tudung hijau + busur di tangan kiri + tabung panah di punggung; `nock` = anak panah saat membidik
+ *  - king: raksasa bermahkota dengan jubah ungu & pedang besar (bos Raja Tengkorak)
+ */
+export function makeSkeleton({ archer = false, king = false } = {}) {
+  const bone = 0xe9e4d0, boneM = mat(bone);
+  const r = makeHumanoid({ skin: bone, shirt: 0x2f2b36, pants: 0x2f2b36, hair: archer ? 0x3f7a3a : null, shoes: 0xd6d0b8, hat: king ? 0xffc83d : archer ? null : 0x8d96a3, scale: king ? 2.2 : 1 });
+  const thin = (o) => o.traverse((m) => { if (m.isMesh) { m.material = boneM; m.scale.x *= .55; m.scale.z *= .55; } });
+  thin(r.armL); thin(r.armR); thin(r.legL); thin(r.legR);
+  for (const y of [.56, .42, .28]) put(r.upper, block(.54, .07, .3, boneM, y));          // tulang rusuk
+  put(r.upper, block(.08, .72, .06, boneM, .36)).position.z = .1;                         // tulang punggung
+  put(r.upper, block(.42, .1, .26, boneM, .04));                                          // panggul
+  if (king) {
+    crown(r.headPivot);
+    put(r.upper, block(.6, 1.0, .05, mat(0x5b2a86), .25)).position.z = .17;               // jubah
+    for (const sx of [-1, 1]) put(r.upper, block(.3, .12, .3, mat(0x7b828f), .74)).position.x = sx * .37;
+    addStars(r, 2.5);
+  }
+  if (archer) {
+    // busur di tangan kiri: memanjang di sumbu z lokal → tegak saat lengan diulurkan ke depan
+    const bow = put(r.armL, new THREE.Group()); bow.position.y = -.66;
+    const wood = mat(0x8a5a2b);
+    put(bow, block(.06, .06, .5, wood));
+    for (const sz of [-1, 1]) { const b = put(bow, block(.06, .06, .34, wood)); b.position.set(0, .1, sz * .38); b.rotation.x = sz * .5; }
+    put(bow, block(.015, .015, 1.0, mat(0xf2efe6))).position.y = .2;                      // tali
+    r.nock = put(r.armL, new THREE.Group()); r.nock.visible = false;
+    put(r.nock, block(.04, .75, .04, wood, -.95)); put(r.nock, block(.08, .12, .08, mat(0x9aa3ad), -1.36));
+    const q = put(r.upper, block(.16, .5, .16, mat(0x6b4426), .42)); q.position.z = .2; q.rotation.z = .3;   // tabung panah
+  } else {
+    // pedang: gagang di genggaman, bilah ke depan (tegak saat lengan diangkat)
+    const sw = put(r.armR, new THREE.Group()); sw.position.y = -.66;
+    put(sw, block(.07, .1, king ? 1.25 : .9, mat(0xcfd8e3))).position.z = king ? -.68 : -.5;
+    put(sw, block(.32, .07, .08, mat(king ? 0xffc83d : 0x6b4426))).position.z = -.06;
+  }
+  return r;
+}
+
+/**
+ * Penyihir jahat: jubah ungu (kaki tersembunyi, melayang), topi runcing, tongkat dengan ujung bercahaya.
+ * Kepala polos tanpa wajah; rambut menutup belakang. queen = Ratu Penyihir (bos) bermahkota.
+ * `glow` = material ujung tongkat (terang saat merapal sihir).
+ */
+export function makeWitch({ queen = false } = {}) {
+  const robe = queen ? 0x40195e : 0x5b2a86, robeM = mat(robe);
+  const r = makeHumanoid({ skin: 0xc4cfb0, shirt: robe, pants: robe, hair: queen ? 0xe2e2ef : 0x2b2140, shoes: robe, scale: queen ? 2.0 : 1 });
+  r.legL.visible = r.legR.visible = false;
+  put(r.body, block(.56, .42, .34, robeM, .55)); put(r.body, block(.68, .38, .44, robeM, .2)); // rok jubah melebar
+  const hatM = mat(queen ? 0x241035 : 0x2d1b46);
+  put(r.headPivot, block(.8, .06, .8, hatM, .53));
+  put(r.headPivot, block(.46, .2, .46, hatM, .66));
+  put(r.headPivot, block(.32, .2, .32, hatM, .85)).position.z = .04;
+  put(r.headPivot, block(.2, .18, .2, hatM, 1.02)).position.z = .1;
+  put(r.headPivot, block(.11, .14, .11, hatM, 1.16)).position.z = .19;
+  put(r.headPivot, block(.48, .06, .48, mat(queen ? 0xffc83d : 0x7cd67a), .6));            // pita topi
+  if (queen) { crown(r.headPivot, .6); addStars(r, 2.35); }
+  r.glow = new THREE.MeshLambertMaterial({ color: 0xd36bff, emissive: 0xb23cff, emissiveIntensity: .4 });
+  const staff = put(r.armR, new THREE.Group()); staff.position.y = -.66;
+  put(staff, block(.07, 1.35, .07, mat(0x5a3a22), .1));
+  put(staff, new THREE.Mesh(BOX, r.glow)).scale.setScalar(.2); staff.children[1].position.y = .85;
+  return r;
+}
+
+// --- proyektil musuh (geometri & material bersama) ---
+/** Anak panah menghadap -z (diarahkan dengan lookAt). */
+export function makeArrow(bone = false) {
+  const g = new THREE.Group();
+  put(g, block(.05, .05, .8, mat(bone ? 0xe9e4d0 : 0x8a5a2b)));
+  put(g, block(.1, .1, .14, mat(0x9aa3ad))).position.z = -.44;
+  put(g, block(.16, .02, .16, mat(0xffffff))).position.z = .36;
+  return g;
+}
+/** Bola sihir ungu bercahaya. */
+export function makeOrb() {
+  const g = new THREE.Group();
+  put(g, new THREE.Mesh(BOX, mat(0xd36bff, { emissive: 0xb23cff, emissiveIntensity: .9 }))).scale.setScalar(.36);
+  put(g, new THREE.Mesh(BOX, mat(0xffffff, { transparent: true, opacity: .35 }))).scale.setScalar(.56);
+  return g;
+}
+/** Latihan: batang kayu melayang setinggi kepala (jongkok!) dan bola batu menggelinding (lompat/condong). */
+export function makeLog() { return block(4, .3, .3, mat(0x8a5a2b)); }
+export function makeBall() { const g = new THREE.Group(); put(g, block(.9, .9, .9, mat(0x9ea3ab))); put(g, block(.5, .92, .5, mat(0x7b828f))); return g; }
 
 /** Slime kubus tembus pandang dengan inti gelap (tanpa wajah). */
 export function makeSlime(big = true) {

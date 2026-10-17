@@ -52,6 +52,9 @@ export const sfx = {
   win: () => [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, { type: 'triangle', dur: .2, vol: .22, delay: i * .08 })),
   tick: () => tone(880, { dur: .06, vol: .15 }),
   boss: () => { tone(110, { type: 'sawtooth', dur: .6, vol: .3, slide: -40 }); tone(82, { type: 'square', dur: .7, vol: .18, delay: .1, slide: -20 }); noise(.5, { vol: .25, freq: 500, type: 'lowpass' }); },
+  swish: () => noise(.18, { vol: .3, freq: 1600 }),
+  arrow: () => { tone(420, { type: 'triangle', dur: .12, vol: .2, slide: -200 }); noise(.1, { vol: .18, freq: 3000 }); },
+  magic: () => [1046, 1397, 1760, 2093].forEach((f, i) => tone(f, { type: 'sine', dur: .12, vol: .12, delay: i * .04, slide: 120 })),
   check: () => { tone(988, { dur: .08, vol: .2 }); tone(1318, { dur: .16, vol: .2, delay: .07 }); },
   over: () => [523, 440, 349, 262].forEach((f, i) => tone(f, { type: 'triangle', dur: .25, vol: .22, delay: i * .14 })),
 };

@@ -47,7 +47,7 @@ html, body { margin: 0; height: 100%; background: var(--sky); color: var(--ink);
 #prompt-text .prog i { display: block; height: 100%; width: 0; background: var(--grass); transition: width .15s; }
 #prompt-skip { border: 0; background: #eef0f4; border-radius: 12px; padding: 8px 10px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--muted); }
 
-#toast { position: fixed; top: 27%; left: 50%; transform: translate(-50%, -10px); padding: 10px 18px; border-radius: 14px; background: var(--ink); color: #fff; font-weight: 700; font-size: 22px; opacity: 0; transition: opacity .2s, transform .2s; z-index: 11; pointer-events: none; white-space: nowrap; max-width: calc(100vw - 24px); overflow: hidden; text-overflow: ellipsis; }
+#toast { position: fixed; top: 27%; left: 50%; transform: translate(-50%, -10px); padding: 10px 18px; border-radius: 14px; background: var(--ink); color: #fff; font-weight: 700; font-size: 22px; opacity: 0; transition: opacity .2s, transform .2s; z-index: 11; pointer-events: none; width: max-content; max-width: min(640px, calc(100vw - 24px)); text-align: center; line-height: 1.25; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 #hurt { position: fixed; inset: 0; pointer-events: none; z-index: 9; opacity: 0; background: radial-gradient(ellipse at center, transparent 45%, rgba(255,40,70,.55)); }
 #hurt.on { animation: hurt .5s ease-out; }
@@ -265,4 +265,46 @@ h2 { margin: 0 0 6px; font-size: 28px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .btn.play, .logo .l2, .mascot { animation: none; }
+}
+
+/* ruang latihan */
+#hud.practice .wave, #hud.practice .foes, #hud.practice #hearts { display: none; }
+.btn.soft small { display: block; font-size: 12px; font-weight: 600; color: var(--muted); }
+#practice { position: fixed; inset: 0; z-index: 11; pointer-events: none; }
+.pr-card { position: absolute; top: calc(max(10px, env(safe-area-inset-top)) + 100px); left: 50%; transform: translateX(-50%); width: min(560px, calc(100vw - 32px)); padding: 12px 14px; border-radius: 18px; background: var(--card); border: 4px solid #fff; box-shadow: 0 16px 30px -14px rgba(42,26,58,.5); }
+.pr-head { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.pr-head b { flex: 1; }
+#pr-step { background: var(--grass); color: #fff; border-radius: 8px; padding: 1px 7px; font-size: 13px; font-weight: 700; }
+#pr-score { font-weight: 700; color: var(--grass-d); }
+#pr-task { font-size: 20px; font-weight: 700; line-height: 1.25; margin-top: 4px; }
+.pr-bar { height: 8px; margin-top: 8px; border-radius: 9px; background: #eaf6e3; overflow: hidden; }
+#pr-bar { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--grass), #b4ec97); transition: width .25s; }
+.pr-moves { position: absolute; right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); left: 236px; display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 6px; }
+.mv { display: grid; justify-items: center; gap: 1px; padding: 8px 4px; border-radius: 14px; background: rgba(255,253,247,.88); border: 3px solid #fff; box-shadow: 0 6px 16px -10px rgba(42,26,58,.5); transition: transform .12s, background .12s; }
+.mv i { font-style: normal; font-size: 24px; line-height: 1.1; }
+.mv[data-k="punchR"] i { transform: scaleX(-1); display: inline-block; }
+.mv b { font-size: 11.5px; line-height: 1.1; text-align: center; }
+.mv small { font-size: 11px; font-weight: 700; color: var(--muted); }
+.mv.done { background: #dff5d2; border-color: #b4ec97; }
+.mv.done small { color: var(--grass-d); }
+.mv.on { background: var(--sun); transform: translateY(-6px) scale(1.06); }
+.mv.pop { animation: mvpop .35s; }
+@keyframes mvpop { 40% { transform: translateY(-8px) scale(1.15); background: var(--sun); } }
+.pr-btns { position: absolute; top: calc(max(10px, env(safe-area-inset-top)) + 100px); right: max(12px, env(safe-area-inset-right)); display: flex; flex-direction: column; gap: 6px; pointer-events: auto; width: 170px; }
+.pr-btns .chip { flex: none; }
+@media (max-width: 1100px) {
+  .pr-btns { top: auto; bottom: calc(max(12px, env(safe-area-inset-bottom)) + 92px); flex-direction: row; width: auto; }
+}
+@media (max-width: 760px) {
+  .pr-card { top: calc(max(10px, env(safe-area-inset-top)) + 86px); }
+  #pr-task { font-size: 17px; }
+  /* HP: satu baris ikon kecil (tanpa nama) di bawah jagoan, supaya jagoan tetap terlihat */
+  .pr-moves { left: max(10px, env(safe-area-inset-left)); right: max(10px, env(safe-area-inset-right)); bottom: calc(max(12px, env(safe-area-inset-bottom)) + 160px); gap: 3px; }
+  .mv { padding: 4px 1px; border-width: 2px; border-radius: 10px; }
+  .mv i { font-size: 17px; }
+  .mv b { display: none; }
+  .mv small { font-size: 9.5px; }
+  .mv.on { transform: translateY(-4px) scale(1.08); }
+  .pr-btns { left: 228px; right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); flex-direction: column; }
+  .pr-btns .chip, .pr-btns .chip.sq { width: 100%; font-size: 13px; padding: 9px 4px; }
 }

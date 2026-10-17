@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Jagoan Kotak</title>
-  <meta name="description" content="Game petualangan 3D dunia kotak yang dimainkan dengan gerakan badan: jalan di tempat untuk maju, condongkan badan untuk menghindar, tinju untuk melawan monster kotak dan bos Raja Batu. Bikin anak aktif bergerak!" />
+  <meta name="description" content="Game petualangan 3D dunia kotak yang dimainkan dengan gerakan badan: jalan di tempat untuk maju, condongkan badan untuk menghindar, tinju untuk melawan monster kotak, tengkorak, penyihir, dan tiga bos raksasa. Ada ruang latihan untuk membiasakan gerakan. Bikin anak aktif bergerak!" />
   <meta name="theme-color" content="#6cc04a" />
   <meta property="og:title" content="Jagoan Kotak — main game sambil bergerak" />
   <meta property="og:description" content="Jalan di tempat, condong, tinju, lompat di depan webcam. Gratis, langsung di browser." />
@@ -48,7 +48,17 @@
       <div class="pill gesture" id="gesture">—</div>
     </div>
   </div>
-  <div id="boss" hidden><div class="boss-name">👑 RAJA BATU <small id="boss-lv"></small></div><div class="boss-bar"><i id="boss-lag"></i><i id="boss-fill"></i></div></div>
+  <div id="boss" hidden><div class="boss-name"><span id="boss-name">👑 RAJA BATU</span> <small id="boss-lv"></small></div><div class="boss-bar"><i id="boss-lag"></i><i id="boss-fill"></i></div></div>
+  <!-- ruang latihan -->
+  <div id="practice" hidden>
+    <div class="pr-card">
+      <div class="pr-head"><span id="pr-step">1/4</span><b id="pr-title">Kenali gerakan</b><span id="pr-score"></span></div>
+      <div id="pr-task"></div>
+      <div class="pr-bar"><i id="pr-bar"></i></div>
+    </div>
+    <div class="pr-moves" id="pr-moves"></div>
+    <div class="pr-btns"><button class="chip sq" id="pr-prev" aria-label="Latihan sebelumnya">◀</button><button class="chip" id="pr-next">Latihan berikutnya ▶</button><button class="chip" id="pr-exit">✔ Selesai</button></div>
+  </div>
   <div id="prompt" hidden><div id="prompt-text"></div><button id="prompt-skip">Lewati ⏭</button></div>
   <div id="toast" aria-live="polite"></div>
 
@@ -72,6 +82,7 @@
       <div class="logo in" aria-label="Jagoan Kotak"><span class="l1">JAGOAN</span><span class="l2">KOTAK</span></div>
       <p class="tag">Kalahkan monster kotak dengan <b>gerakan badanmu</b>. Makin banyak bergerak, makin kuat jurusmu!</p>
       <button class="btn big play" id="btn-camera"><span class="ico">▶</span><span class="txt">MAIN<small>pakai gerakan badan 📷</small></span></button>
+      <button class="btn soft" id="btn-practice">🥋 Ruang latihan <small>biasakan gerakan dulu</small></button>
       <button class="btn soft" id="btn-keys">⌨️ Main tanpa kamera</button>
       <div class="chips">
         <button class="chip" id="btn-howto">❓ Cara main</button>
@@ -117,7 +128,9 @@
       <div class="tips">
         <p>⚡ <b>Energi jurus</b> terisi dari langkah kaki, pukulan, dan tangkisan.</p>
         <p>👾 Monster yang <b>gemetar</b> sedang bersiap menyerang. Tangkis atau menghindar!</p>
-        <p>👑 Tiap gelombang ke-5 datang <b>bos Raja Batu</b>: hentakan → lompat, pukulan → jongkok/perisai, serudukan → condong ke samping. Habis menyeruduk dia pusing: pukulanmu 2× lebih kuat!</p>
+        <p>🥋 Baru pertama kali? Masuk <b>Ruang latihan</b> dulu: coba semua gerakan, tinju sasaran, dan hindari serangan tanpa takut kalah.</p>
+        <p>💀 <b>Tengkorak pedang</b> mengangkat pedang → jongkok/perisai. 🏹 <b>Pemanah</b> membidik → perisai, jongkok, atau condong. 🔮 <b>Penyihir</b>: tinju bola sihirnya supaya memantul balik; lingkaran ungu di kakimu → geser keluar atau lompat.</p>
+        <p>👑 Tiap gelombang ke-5 datang <b>bos</b>, bergiliran: <b>Raja Batu</b> (hentakan → lompat, serudukan → condong), <b>Raja Tengkorak</b> (tebasan → jongkok/perisai, hujan panah → perisai, putaran → condong), <b>Ratu Penyihir</b> (pantulkan bola sihirnya!). Saat bos pusing, pukulanmu 2× lebih kuat!</p>
         <p>🌀 <b>Pusing?</b> Nyalakan tombol 🌀 (anti pusing), main di ruangan terang, layar sejajar mata ±2 m, dan istirahat tiap selesai gelombang.</p>
         <p>⌨️ Keyboard: W jalan · Shift lari · A/D belok · Q dongak · J/K tinju · L perisai · Spasi lompat (2× di udara = ganda, tahan C dulu = tinggi) · C jongkok · U jurus</p>
       </div>
