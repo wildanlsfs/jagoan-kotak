@@ -38,8 +38,10 @@ export function createMotion() {
   const arm = { L: true, R: true };
   const kneeArm = { L: true, R: true };
   const prevW = { L: null, R: null };         // posisi pergelangan sebelumnya (2D, satuan torso)
-  const prevReach = { L: 0, R: 0 };
+  const hist = { L: [], R: [] };                // riwayat ~0.3 dtk: { t, reach } (meter, + = tangan di depan bahu)
+  const peak = { L: 0, R: 0 };                  // jangkauan terjauh sejak tinju terakhir (untuk siap tinju lagi)
   const lastPunch = { L: -1e9, R: -1e9 };
+  let blockSince = 0;
   let lastT = 0, stepTimes = [], lastStepSide = '', jumpArmed = true, crouchSince = 0, track = null, lostSince = 0;
   let calib = [];
   let leanS = 0;                                // kemiringan badan yang dihaluskan
@@ -160,27 +162,32 @@ export function createMotion() {
     st.look += (target - st.look) * Math.min(1, dt * 4);      // pelan: getaran kepala tidak menggoyang kamera
 
     // 3) tangan
+    //    Tinju lurus ke kamera hampir tidak bergerak di gambar 2D (pergelangan tetap di depan dagu), jadi
+    //    dasarnya kedalaman 3D. Dua jebakan lama: (a) posisi kuda-kuda (kepalan di depan dagu) terbaca
+    //    PERISAI dan menahan tinju; (b) tangan baru "siap" lagi kalau ditarik sangat dekat ke bahu.
+    //    Sekarang: tinju = jangkauan bertambah cukup banyak dalam ~0.25 dtk (tahan frame rate rendah),
+    //    siap lagi begitu tangan ditarik sedikit, dan tinju selalu menang atas perisai.
     const wrist = (side) => lm[side === 'L' ? L.wrL : L.wrR];
     const shoulder = (side) => lm[side === 'L' ? L.shL : L.shR];
     const nose = lm[L.nose];
     const nearFace = (w) => w.y < m.sy + T * .05 && w.y > nose.y - T * .55 && Math.abs(w.x - nose.x) * aspect < T * .6;
-    st.block = nearFace(wrist('L')) && nearFace(wrist('R'));
-    const above = (w) => w.y < nose.y - T * .25;
-    st.raise = above(wrist('L')) && above(wrist('R')) && !st.block;
-    st.raiseHeld = st.raise ? st.raiseHeld + dt : 0;
+    const reachOf = (side) => (wl ? wl[side === 'L' ? L.shL : L.shR].z - wl[side === 'L' ? L.wrL : L.wrR].z : 0);
 
     for (const side of ['L', 'R']) {
       const w = wrist(side), s = shoulder(side);
       const wx = w.x * aspect / T, wy = w.y / T;
       let punched = false;
-      // a) kedalaman dunia: tangan maju ke arah kamera dengan cepat
+      // a) kedalaman dunia: jangkauan ≥ 22 cm & naik ≥ 8 cm dalam 0.25 dtk, tangan di depan bahu & setinggi dada
       if (wl) {
-        const ww = wl[side === 'L' ? L.wrL : L.wrR], sw = wl[side === 'L' ? L.shL : L.shR];
-        const reach = sw.z - ww.z;                          // + = tangan di depan bahu (lebih dekat ke kamera)
-        const vel = (reach - prevReach[side]) / dt;
-        prevReach[side] = reach;
-        if (arm[side] && reach > .24 && vel > 1.0) punched = true;
-        if (reach < .16) arm[side] = true;
+        const reach = reachOf(side), H = hist[side];
+        H.push({ t: now, reach });
+        while (H.length && now - H[0].t > 260) H.shift();
+        const low = Math.min(...H.map((h) => h.reach));
+        // setinggi dada/bahu (ayunan lengan saat jalan di tempat ada di dekat pinggul, bukan tinju)
+        const high = wl[side === 'L' ? L.wrL : L.wrR].y - wl[side === 'L' ? L.shL : L.shR].y < .3;
+        if (arm[side] && high && reach > .22 && reach - low > .08) punched = true;
+        peak[side] = Math.max(peak[side], reach);
+        if (!arm[side] && (reach < peak[side] - .07 || reach < .12)) arm[side] = true; // ditarik sedikit = siap lagi
       }
       // b) cadangan 2D: hentakan cepat menjauh dari bahu setinggi dada (pukulan samping / tinju miring)
       if (prevW[side]) {
@@ -189,16 +196,26 @@ export function createMotion() {
         const dx = (w.x - s.x) * aspect / T, dy = (w.y - s.y) / T;
         const away = (vx * dx + vy * dy) / (Math.hypot(dx, dy) || 1);
         const chest = w.y > nose.y - T * .25 && w.y < m.sy + T * .65;
-        if (arm[side] && chest && speed > 2.6 && away > 1.7 && Math.hypot(dx, dy) > .5) punched = true;
+        if (arm[side] && chest && !nearFace(w) && speed > 2.3 && away > 1.5 && Math.hypot(dx, dy) > .5) punched = true; // bukan tangan naik ke kuda-kuda
         if (!wl && Math.hypot(dx, dy) < .45) arm[side] = true;
         if (!wl && speed < .6) arm[side] = true;
       }
       prevW[side] = [wx, wy];
-      if (punched && now - lastPunch[side] > 260 && !st.block) {
-        lastPunch[side] = now; arm[side] = false;
+      if (punched && now - lastPunch[side] > 240) {
+        lastPunch[side] = now; arm[side] = false; peak[side] = reachOf(side);
         if (side === 'L') ev.punchL = true; else ev.punchR = true;
       }
     }
+
+    // perisai: kedua tangan di depan wajah, TIDAK sedang terjulur, ditahan sebentar; batal oleh tinju
+    const tucked = (side) => !wl || reachOf(side) < .2;
+    const guard = nearFace(wrist('L')) && nearFace(wrist('R')) && tucked('L') && tucked('R');
+    const sincePunch = now - Math.max(lastPunch.L, lastPunch.R);
+    if (guard && sincePunch > 250) { if (!blockSince) blockSince = now; } else blockSince = 0;
+    st.block = !!blockSince && now - blockSince > 110;
+    const above = (w) => w.y < nose.y - T * .25;
+    st.raise = above(wrist('L')) && above(wrist('R')) && !st.block;
+    st.raiseHeld = st.raise ? st.raiseHeld + dt : 0;
 
     // 3b) tiru lengan: arah bahu→pergelangan diubah ke ruang jagoan (jagoan dilihat dari belakang, jadi
     //     lengan kiri pemain = lengan kiri jagoan di sisi kiri layar, seperti cermin).
