@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildWorld, setupSky, groundAt, walkable, blockAt, islandRadius, ARENA_R } from './world.js';
-import { makeHero, makeBrute, makeBoss, makeSkeleton, makeWitch, makeArrow, makeOrb, makeLog, makeBall, makeSlime, makeBat, makeDummy, makeGem, makeHeart, makePunchWavePool, makeDebris, makeBlob, animateHumanoid, PUNCH_T, easeOutBack } from './characters.js';
+import { makeHero, makeBrute, makeBoss, makeSkeleton, makeWitch, makeCreeper, makeArrow, makeOrb, makeLog, makeBall, makeSlime, makeBat, makeDummy, makeGem, makeHeart, makePunchWavePool, makeDebris, makeBlob, animateHumanoid, PUNCH_T, easeOutBack } from './characters.js';
 import { SLOTS, ITEMS, loadWardrobe, saveWardrobe, applyLook, owns, buy, swatchOf, sleeveOf } from './wardrobe.js';
 import { createMotion, drawSkeleton } from './motion.js';
 import { sfx, music, unlock, setMuted, isMuted } from './audio.js';
@@ -263,6 +263,7 @@ const FOE = {
   skel: { hp: 3, h: 1.8, r: .4, speed: 2.0, gems: 2, score: 25, color: 0xe9e4d0 },
   archer: { hp: 2, h: 1.8, r: .4, speed: 1.6, gems: 2, score: 25, color: 0xe9e4d0 },
   witch: { hp: 3, h: 1.9, r: .45, speed: 1.4, gems: 3, score: 35, color: 0x9b5de5 },
+  creeper: { hp: 2, h: 1.7, r: .4, speed: 2.1, gems: 2, score: 30, color: 0x5fbf4e },
   boss: { hp: 26, h: 4.1, r: 1.0, speed: 1.5, gems: 15, score: 300, color: 0x9ea3ab, boss: true, icon: '👑', title: 'RAJA BATU' },
   bossSkel: { hp: 28, h: 4.0, r: 1.0, speed: 1.8, gems: 18, score: 350, color: 0xe9e4d0, boss: true, icon: '💀', title: 'RAJA TENGKORAK' },
   bossWitch: { hp: 24, h: 3.9, r: .95, speed: 0, gems: 18, score: 350, color: 0x9b5de5, boss: true, icon: '🔮', title: 'RATU PENYIHIR' },
@@ -277,6 +278,7 @@ function spawnFoe(type, near) {
   else if (type === 'boss') rig = makeBoss();
   else if (type === 'skel' || type === 'archer' || type === 'bossSkel') rig = makeSkeleton({ archer: type === 'archer', king: type === 'bossSkel' });
   else if (type === 'witch' || type === 'bossWitch') rig = makeWitch({ queen: type === 'bossWitch' });
+  else if (type === 'creeper') rig = makeCreeper();
   else rig = makeBrute(type === 'brute2' ? 2 : 1);
   const f = { type, def, rig, hp: def.hp, pos: new THREE.Vector3(), yaw: 0, vy: 0, onGround: true, t: Math.random() * 1.5, state: 'chase', timer: 0, flash: 0, knock: new THREE.Vector3(), phase: Math.random() * 6, hurtCd: 0, orbit: Math.random() * 6,
     born: 0, hurtT: 0, atkT: -1, speed: 0 };
@@ -371,7 +373,7 @@ function hurtFoe(f, dmg, dir, power = 4) {
   else if (f.type !== 'bat') { f.vy = 3.5; f.onGround = false; }
   else { f.state = 'circle'; f.timer = 2.5; }
   // dipukul saat bersiap = serangannya batal (pemanah & penyihir juga)
-  if (f.state === 'windup' || f.state === 'aim' || f.state === 'cast' || f.state === 'hex') { f.state = 'recover'; f.timer = .6; if (f.rig.nock) f.rig.nock.visible = false; }
+  if (f.state === 'windup' || f.state === 'aim' || f.state === 'cast' || f.state === 'hex' || f.state === 'fuse') { if (f.state === 'fuse') { f.rig.root.scale.setScalar(f.rig.baseScale); f.cd = 1.2; } f.state = 'recover'; f.timer = .6; if (f.rig.nock) f.rig.nock.visible = false; }
   debris.burst(center(f), f.def.color, 8, 4);
   sfx.hit();
   P.energy = Math.min(100, P.energy + 4);
@@ -499,13 +501,14 @@ const BOSSES = ['boss', 'bossSkel', 'bossWitch'];
 function planWave(n) {
   if (n % BOSS_EVERY === 0) return [BOSSES[(n / BOSS_EVERY - 1) % BOSSES.length]];
   const q = [];
-  // monster baru diperkenalkan satu per satu: tengkorak pedang (gel. 3), pemanah (4), penyihir (6)
+  // monster baru diperkenalkan satu per satu: tengkorak pedang (gel. 3), pemanah & creeper (4), penyihir (6)
   const slimes = Math.max(2, Math.min(2 + n, 7) - Math.floor(n / 3)), brutes = n >= 2 ? Math.min(n - 1, 4) : 0, bats = n >= 3 ? Math.min(n - 2, 3) : 0;
   const skels = n >= 3 ? Math.min(n - 2, 4) : 0, archers = n >= 4 ? Math.min(Math.floor((n - 2) / 2), 3) : 0, witches = n >= 6 ? Math.min(Math.floor((n - 4) / 2), 2) : 0;
+  const creepers = n >= 4 ? Math.min(Math.floor((n - 2) / 2), 2) : 0;
   const big = n >= 7 ? Math.floor((n - 5) / 2) : 0;
   const add = (t, k) => { for (let i = 0; i < k; i++) q.push(t); };
   // monster istimewa dulu, lalu diisi slime/monster kotak sampai batas (makin banyak jenis = jumlah tidak meledak)
-  add('skel', skels); add('archer', archers); add('witch', witches); add('brute2', big); add('bat', bats);
+  add('skel', skels); add('archer', archers); add('witch', witches); add('creeper', creepers); add('brute2', big); add('bat', bats);
   const cap = Math.round(3 + n * 1.6);
   for (let i = 0; i < Math.max(slimes, brutes) && q.length < cap; i++) { if (i < slimes) q.push('slime'); if (i < brutes && q.length < cap) q.push('brute'); }
   for (let i = q.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [q[i], q[j]] = [q[j], q[i]]; }
@@ -1029,6 +1032,7 @@ function updateFoes(dt, now) {
     else if (f.type === 'bossWitch') updateBossWitch(f, dt, to, dist);
     else if (f.type === 'skel') updateSkel(f, dt, to, dist);
     else if (f.type === 'archer') updateArcher(f, dt, to, dist);
+    else if (f.type === 'creeper') updateCreeper(f, dt, to, dist);
     else if (f.type === 'witch') updateWitch(f, dt, to, dist);
     else if (f.type === 'bat') {
       const g = groundAt(f.pos.x, f.pos.z);
@@ -1193,6 +1197,7 @@ const FOE_TIPS = {
   archer: 'Pemanah membidik — PERISAI, JONGKOK, atau CONDONG! 🏹',
   witch: 'Bola sihir — TINJU untuk memantulkannya! 👊✨',
   hex: 'Lingkaran sihir di kakimu — GESER keluar atau LOMPAT! ✨',
+  creeper: 'Creeper mendesis — MUNDUR, PERISAI, atau TINJU dia! 💥',
 };
 const tipsShown = {};
 function tip(key) { const n = tipsShown[key] || 0; if (n < 2) { tipsShown[key] = n + 1; toast(FOE_TIPS[key], 1700); } }
@@ -1253,6 +1258,40 @@ function updateArcher(f, dt, to, dist) {
     speed: f.speed, onGround: f.onGround, hurt: f.hurtT / .3,
     arms: f.state === 'aim' ? { L: [1.57, .12], R: [1.45 - .1 * aim, -.3 - .4 * aim] } : f.state === 'chase' ? { L: [.35, -.1] } : null,
   }, dt);
+}
+
+// --- Creeper: berjalan mendekat, lalu mendesis & menggembung (tanda jelas, ±1.3 dtk), lalu meledak.
+//     Selamat kalau MUNDUR keluar jangkauan, PERISAI (tangkis), atau TINJU sebelum meledak (batal, mundur sebentar). ---
+const CREEPER_BLAST = 3.3;
+function updateCreeper(f, dt, to, dist) {
+  f.cd = (f.cd || 0) - dt; f.timer -= dt;
+  let moving = false;
+  if (f.state === 'chase') {
+    faceTo(f, to, 6, dt);
+    if (dist > 2.6 || f.cd > 0) { if (dist > 1.6) { walkFwd(f, f.def.speed * dt); moving = true; } }
+    else { f.state = 'fuse'; f.timer = f.wind = 1.3; f.fuseBlink = 0; sfx.warn(); tip('creeper'); }
+  } else if (f.state === 'fuse') {
+    faceTo(f, to, 3, dt);
+    const p = clamp(1 - f.timer / f.wind, 0, 1);
+    f.rig.root.scale.setScalar(f.rig.baseScale * (1 + p * .38));
+    f.fuseBlink += dt * (6 + p * 14);
+    setFlash(f, Math.floor(f.fuseBlink) % 2 === 0);
+    if (f.timer <= 0) { creeperBlast(f); return; }
+  } else if (f.state === 'recover') { if (f.timer <= 0) { f.state = 'chase'; } }
+  physicsY(f, dt);
+  f.speed += ((moving ? f.def.speed * 1.6 : 0) - f.speed) * Math.min(1, dt * 8);
+  const sw = Math.sin(now2() * .012 * Math.max(.3, f.speed)) * Math.min(1, f.speed / 2) * .7;
+  f.rig.legs.forEach((l, i) => { l.rotation.x += (((i === 0 || i === 3) ? sw : -sw) - l.rotation.x) * Math.min(1, dt * 18); });
+  f.rig.body.rotation.x += ((f.state === 'fuse' ? -.12 : 0) - f.rig.body.rotation.x) * Math.min(1, dt * 10);
+}
+const now2 = () => performance.now();
+function creeperBlast(f) {
+  const c = center(f), d = Math.hypot(P.pos.x - f.pos.x, P.pos.z - f.pos.z);
+  debris.burst(c, 0x5fbf4e, 36, 8, .25); debris.burst(c, 0xffffff, 14, 6, .15); sfx.slam();
+  shockwave(f.pos.clone(), false);                                    // cincin visual saja (sh.hit = true: tidak melukai)
+  if (d < CREEPER_BLAST && Math.abs(P.pos.y - f.pos.y) < 2) damagePlayer(f.pos, 'DUAR! Kena ledakan creeper 💥');
+  // ledakan juga mendorong monster lain & tidak memberi hadiah (creeper hilang sendiri)
+  state.foesLeft--; removeFoe(f);
 }
 
 // --- Penyihir: melayang, bola sihir yang mengejar pelan (TINJU = memantul balik, atau PERISAI),
@@ -1529,7 +1568,7 @@ const DRILLS = [
   { id: 'moves', title: 'Kenali gerakan', task: 'Coba semua gerakan di bawah sampai menyala hijau ✅' },
   { id: 'punch', title: 'Tinju sasaran', need: 12 },
   { id: 'dodge', title: 'Hindari serangan', need: 8 },
-  { id: 'spar', title: 'Lawan monster jinak', need: 6 },
+  { id: 'spar', title: 'Lawan monster jinak', need: 7 },
 ];
 const HAZ = {
   arrow: '🏹 Panah datang! PERISAI, JONGKOK, atau CONDONG', log: '🪵 Kayu setinggi kepala — JONGKOK!',
@@ -1537,9 +1576,9 @@ const HAZ = {
   orb: '🔮 Bola sihir — TINJU untuk memantulkannya!', rune: '✨ Lingkaran sihir di kakimu — GESER keluar atau LOMPAT!',
 };
 const HAZ_ORDER = ['arrow', 'log', 'ball', 'shock', 'orb', 'rune'];
-const SPAR = ['slime', 'brute', 'skel', 'archer', 'bat', 'witch'];
-const SPAR_NAME = { slime: 'Slime 🟩', brute: 'Monster kotak 👾', skel: 'Tengkorak pedang 💀', archer: 'Tengkorak pemanah 🏹', bat: 'Kelelawar 🦇', witch: 'Penyihir 🔮' };
-const SPAR_TIP = { slime: 'Tinju saat dia mendekat', brute: 'Dia gemetar = mau memukul → PERISAI', skel: FOE_TIPS.skel, archer: FOE_TIPS.archer, bat: 'Menukik → JONGKOK, lalu tinju', witch: FOE_TIPS.witch };
+const SPAR = ['slime', 'brute', 'skel', 'archer', 'bat', 'witch', 'creeper'];
+const SPAR_NAME = { slime: 'Slime 🟩', brute: 'Monster kotak 👾', skel: 'Tengkorak pedang 💀', archer: 'Tengkorak pemanah 🏹', bat: 'Kelelawar 🦇', witch: 'Penyihir 🔮', creeper: 'Creeper 💥' };
+const SPAR_TIP = { slime: 'Tinju saat dia mendekat', brute: 'Dia gemetar = mau memukul → PERISAI', skel: FOE_TIPS.skel, archer: FOE_TIPS.archer, bat: 'Menukik → JONGKOK, lalu tinju', witch: FOE_TIPS.witch, creeper: FOE_TIPS.creeper };
 const drillId = () => (state.mode === 'practice' && state.practice ? DRILLS[state.practice.i].id : '');
 ui.prMoves.innerHTML = MOVES.map((m) => `<div class="mv" data-k="${m.k}"><i>${m.i}</i><b>${m.n}</b><small>0/${m.need}</small></div>`).join('');
 const moveEls = Object.fromEntries([...ui.prMoves.children].map((el) => [el.dataset.k, el]));
@@ -1786,7 +1825,7 @@ const maxRatio = pixelRatio;
 // Kompilasi semua shader monster/barang di awal, supaya tidak tersendat saat monster jenis baru pertama muncul.
 function warmUp() {
   const g = new THREE.Group();
-  const rigs = [makeBrute(1), makeBrute(2), makeSlime(true), makeBat(), makeDummy(), makeSkeleton(), makeSkeleton({ archer: true }), makeWitch(), makeBoss(), makeSkeleton({ king: true }), makeWitch({ queen: true }), { root: makeArrow() }, { root: makeArrow(true) }, { root: makeOrb() }, { root: makeLog() }, { root: makeBall() }];
+  const rigs = [makeBrute(1), makeBrute(2), makeSlime(true), makeBat(), makeDummy(), makeSkeleton(), makeSkeleton({ archer: true }), makeWitch(), makeCreeper(), makeBoss(), makeSkeleton({ king: true }), makeWitch({ queen: true }), { root: makeArrow() }, { root: makeArrow(true) }, { root: makeOrb() }, { root: makeLog() }, { root: makeBall() }];
   rigs.forEach((r, i) => { r.root.position.set(P.pos.x + i - 2, P.pos.y, P.pos.z - 3); g.add(r.root); });
   const flash = makeBrute(1); flash.root.traverse((o) => { if (o.isMesh) o.material = flashMat; }); g.add(flash.root);
   g.add(makeGem(), makeHeart(), makeBlob(1));

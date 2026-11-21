@@ -333,6 +333,30 @@ export function makeSlime(big = true) {
   return { root, body, outer, core, size: s, baseScale: 1 };
 }
 
+/**
+ * Creeper: kotak hijau tinggi berkaki empat, TANPA WAJAH (hanya bercak hijau tua di badan & kepala).
+ * `upper` = badan (dipakai animasi roboh), `legs` = 4 kaki yang berayun saat berjalan.
+ */
+export function makeCreeper() {
+  const root = new THREE.Group();
+  const body = new THREE.Group(); root.add(body);
+  const green = mat(0x5fbf4e), dark = mat(0x2f7a30), mid = mat(0x7bd35f);
+  put(body, block(.5, .9, .3, green, .85));                                       // badan
+  const head = put(body, new THREE.Group()); head.position.y = 1.3;
+  put(head, block(.52, .52, .52, green, .26));                                    // kepala polos
+  const patch = (parent, w, h, d, x, y, z, m) => { const b = put(parent, block(w, h, d, m, y)); b.position.x = x; b.position.z = z; };
+  patch(head, .16, .16, .54, -.14, .38, 0, dark); patch(head, .14, .12, .54, .15, .12, 0, mid);   // bercak (menembus tipis ke tiap sisi)
+  patch(head, .54, .12, .14, 0, .3, .12, dark);
+  patch(body, .14, .2, .32, -.1, 1.0, 0, dark); patch(body, .16, .16, .32, .1, .6, 0, dark); patch(body, .12, .18, .32, -.12, .5, 0, mid);
+  const legs = [];
+  for (const [x, z] of [[-.13, -.2], [.13, -.2], [-.13, .2], [.13, .2]]) {
+    const leg = new THREE.Group(); leg.position.set(x, .42, z);
+    const m = new THREE.Mesh(BOX, dark); m.scale.set(.22, .42, .22); m.position.y = -.21; leg.add(m);
+    body.add(leg); legs.push(leg);
+  }
+  return { root, body, upper: body, legs, baseScale: 1 };
+}
+
 /** Kelelawar kotak: badan ungu tua + dua sayap yang mengepak (tanpa wajah). */
 export function makeBat() {
   const root = new THREE.Group();
