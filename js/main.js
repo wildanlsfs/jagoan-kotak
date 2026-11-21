@@ -594,7 +594,7 @@ function beginGame() {
   resetGame();
   ui.start.hidden = true; ui.calib.hidden = true; ui.over.hidden = true; ui.hud.hidden = false; ui.reticle.hidden = false;
   ui.practice.hidden = true; ui.hud.classList.remove('practice');
-  ui.touch.hidden = !(matchMedia('(pointer: coarse)').matches && ctl.source !== 'pose');
+  ui.touch.hidden = !(matchMedia('(pointer: coarse)').matches && ctl.source !== 'pose'); document.body.classList.toggle('touch-ui', !ui.touch.hidden);
   music.stop(.05); music.start(); sfx.ready();
   let tutDone = false; try { tutDone = localStorage.getItem('kotak.tutDone') === '1'; } catch {}
   if (tutDone && !state.forceTutorial) { state.mode = 'play'; toast('Ayo! 💪'); startWave(1); }
@@ -662,7 +662,7 @@ function goHome() {
   ui.practice.hidden = true; ui.hud.classList.remove('practice');
   music.stop(.2); music.paused = false; resetGame(); state.mode = 'start'; state.forceTutorial = false;
   Object.assign(P, { yaw: 0 }); P.pos.set(0, groundAt(0, 4), 4); showoff.t = 1.5;
-  ui.pause.hidden = ui.over.hidden = ui.hud.hidden = ui.touch.hidden = ui.reticle.hidden = ui.prompt.hidden = ui.calib.hidden = true;
+  ui.pause.hidden = ui.over.hidden = ui.hud.hidden = ui.touch.hidden = ui.reticle.hidden = ui.prompt.hidden = ui.calib.hidden = true; document.body.classList.remove('touch-ui');
   ui.pauseMsg.hidden = true; ui.cam.hidden = true; ui.start.hidden = false; ui.menuMain.hidden = false; ui.outfits.hidden = true; ui.start.classList.remove('shop'); shop.pick = null; previewLook(); syncWallet();
   dummy.root.visible = false;
 }
@@ -1586,7 +1586,7 @@ const moveEls = Object.fromEntries([...ui.prMoves.children].map((el) => [el.data
 function beginPractice() {
   resetGame();
   ui.start.hidden = ui.calib.hidden = ui.over.hidden = true; ui.hud.hidden = false; ui.practice.hidden = false; ui.hud.classList.add('practice');
-  ui.reticle.hidden = arena(); ui.touch.hidden = !(matchMedia('(pointer: coarse)').matches && ctl.source !== 'pose');
+  ui.reticle.hidden = arena(); ui.touch.hidden = !(matchMedia('(pointer: coarse)').matches && ctl.source !== 'pose'); document.body.classList.toggle('touch-ui', !ui.touch.hidden);
   music.stop(.05); music.start(); sfx.ready();
   state.mode = 'practice';
   state.practice = { i: 0, cnt: {}, done: 0, steps0: stats.steps, jumps0: stats.jumps, crouch0: stats.crouches };

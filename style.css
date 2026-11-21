@@ -355,3 +355,24 @@ body.cam-mode #calib .count { margin: 0 0 8px; }
   body.cam-mode #calib h2 { font-size: 30px; }
 }
 body.cam-mode #cam-status { font-size: 16px; padding: 8px 12px; }
+
+/* Ruang latihan di HP / tablet sentuh: panel latihan tidak boleh menimpa stik & tombol sentuh (body.touch-ui diatur main.js).
+   Tombol sentuh: stik di kiri (±146 px), 3x2 tombol di kanan (±202 px), atau 1 baris 6 tombol di layar pendek. */
+body.touch-ui .pr-moves { left: 160px; right: max(214px, calc(env(safe-area-inset-right) + 214px)); bottom: max(12px, env(safe-area-inset-bottom)); }
+body.touch-ui .pr-btns { top: auto; left: 160px; right: 214px; width: auto; bottom: calc(max(12px, env(safe-area-inset-bottom)) + 92px); flex-direction: row; }
+body.touch-ui .pr-btns .chip { flex: 1; width: auto; }
+body.touch-ui .pr-btns .chip.sq { flex: none; }
+@media (max-width: 760px) and (min-height: 521px) {
+  /* HP tegak: baris gerakan tepat di atas stik & tombol, tombol latihan satu baris di atasnya */
+  body.touch-ui .pr-moves { left: max(10px, env(safe-area-inset-left)); right: max(10px, env(safe-area-inset-right)); bottom: calc(max(12px, env(safe-area-inset-bottom)) + 160px); }
+  body.touch-ui .pr-btns { left: max(10px, env(safe-area-inset-left)); right: max(10px, env(safe-area-inset-right)); bottom: calc(max(12px, env(safe-area-inset-bottom)) + 160px + 52px); }
+}
+@media (max-height: 520px) {
+  /* HP mendatar: tombol sentuh 1 baris di kanan bawah; gerakan & tombol latihan di sela stik dan tombol */
+  body.touch-ui .pr-moves { left: 160px; right: 12px; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 62px); }
+  /* 6 tombol sentuh x 50 px + celah = ±320 px di kanan; tombol latihan hanya boleh memakai sisa ruang di antara stik dan tombol sentuh */
+  body.touch-ui .pr-btns { left: 156px; right: auto; width: max(96px, calc(100vw - 156px - 352px - 8px)); bottom: max(14px, env(safe-area-inset-bottom)); }
+  body.touch-ui .pr-btns { gap: 4px; }
+  body.touch-ui .pr-btns .chip { font-size: 10px; letter-spacing: -.2px; }
+  body.touch-ui .pr-btns .chip, body.touch-ui .pr-btns .chip.sq { min-height: 50px; font-size: 11px; padding: 4px 3px; white-space: normal; line-height: 1.1; }
+}
