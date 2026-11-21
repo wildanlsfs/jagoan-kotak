@@ -1807,6 +1807,11 @@ function frame(now) {
   if (!active && now - lastRender < 31) return;
   const dt = Math.min(raw, .05); last = now; lastRender = now;
   if (ctl.source === 'pose' && state.mode !== 'start' && state.mode !== 'over') readPose(now);
+  // Mode kamera: pemain berdiri jauh dari layar, jadi teks petunjuk dibesarkan lewat CSS (body.cam-mode)
+  const camMode = ctl.source === 'pose' && state.mode !== 'start';
+  if (camMode !== document.body.classList.contains('cam-mode')) document.body.classList.toggle('cam-mode', camMode);
+  const calibrating = state.mode === 'calib';
+  if (calibrating !== document.body.classList.contains('calibrating')) document.body.classList.toggle('calibrating', calibrating);
   if (state.mode === 'calib') tickCalib(now);
   if (state.mode !== 'paused' && state.mode !== 'over') update(dt, now);
   else { debris.update(dt); updateDying(dt); updateCamera(dt); }
