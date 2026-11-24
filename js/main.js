@@ -3,6 +3,7 @@ import { buildWorld, setupSky, groundAt, walkable, blockAt, islandRadius, ARENA_
 import { makeHero, makeBrute, makeBoss, makeSkeleton, makeWitch, makeCreeper, makeArrow, makeOrb, makeLog, makeBall, makeSlime, makeBat, makeDummy, makeGem, makeHeart, makePunchWavePool, makeDebris, makeBlob, animateHumanoid, PUNCH_T, easeOutBack } from './characters.js';
 import { SLOTS, ITEMS, loadWardrobe, saveWardrobe, applyLook, owns, buy, swatchOf, sleeveOf } from './wardrobe.js';
 import { createMotion, drawSkeleton } from './motion.js';
+import { CAM_VIDEO, lowLightTune, LightMeter, brightFrame, DARK_HINT_ID, DIM_HINT_ID } from './cam-light.js';
 import { sfx, music, unlock, setMuted, isMuted } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -112,7 +113,9 @@ tapBtn('t-super', () => (ctl.superReq = true));
 
 // kamera + MediaPipe
 const motion = createMotion();
-let landmarker = null, lastVideoTime = -1;
+let landmarker = null, lastVideoTime = -1, meter = null, poseW = 320, poseH = 240;
+/** Petunjuk cahaya (gelap/redup) atau '' kalau cukup terang. */
+const lightHint = () => !meter ? '' : meter.level === 'dark' ? DARK_HINT_ID : meter.level === 'dim' ? DIM_HINT_ID : '';
 const pctx = ui.pose.getContext('2d');
 // Deteksi pose sebaiknya di Web Worker (gambar game tidak tersendat saat deteksi berjalan).
 // Kalau worker gagal dimuat, kembali ke deteksi di thread utama.
@@ -151,24 +154,32 @@ async function startCamera() {
     });
   }
   ui.camStatus.textContent = 'izinkan kamera ya…';
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }, audio: false });
+  const stream = await navigator.mediaDevices.getUserMedia({ video: CAM_VIDEO, audio: false });
   ui.video.srcObject = stream; await ui.video.play();
-  ui.pose.width = ui.video.videoWidth || 640; ui.pose.height = ui.video.videoHeight || 480;
+  const vtrack = stream.getVideoTracks()[0];
+  lowLightTune(vtrack).catch(() => {});        // best effort, tidak menunggu
+  meter = new LightMeter(ui.video);
+  // Frame pose diperkecil (kamera 720p, model cukup ~320 px); koordinat landmark tetap ternormalisasi.
+  const vw = ui.video.videoWidth || 640, vh = ui.video.videoHeight || 480;
+  poseW = 320; poseH = Math.max(2, Math.round(320 * vh / vw));
+  ui.pose.width = poseW; ui.pose.height = poseH;
   ui.camStatus.textContent = 'kamera aktif';
   ctl.source = 'pose';
 }
 function readPose(now) {
+  if (meter) meter.sample();
   if (!landmarker || ui.video.readyState < 2 || ui.video.currentTime === lastVideoTime) return null;
   if (poseWorker) {
     if (workerBusy) return null;                // satu frame diproses sekali waktu; sisanya dilewati
     lastVideoTime = ui.video.currentTime; workerBusy = true;
-    createImageBitmap(ui.video)
+    const src = meter ? brightFrame(ui.video, meter.gain, poseW, poseH) : ui.video;
+    createImageBitmap(src, { resizeWidth: poseW, resizeHeight: poseH, resizeQuality: 'low' })
       .then((bitmap) => poseWorker.postMessage({ type: 'frame', bitmap, ts: performance.now() }, [bitmap]))
       .catch(() => { workerBusy = false; });
     return null;
   }
   lastVideoTime = ui.video.currentTime;
-  const res = landmarker.detectForVideo(ui.video, now);
+  const res = landmarker.detectForVideo(meter ? brightFrame(ui.video, meter.gain, poseW, poseH) : ui.video, now);
   return handlePose(res.landmarks || [], res.worldLandmarks || [], now);
 }
 /** Satu frame pose → input. Dipisah supaya bisa diuji dengan landmark buatan (?debug). */
@@ -192,6 +203,8 @@ function handlePose(all, world, now) {
     ui.camStatus.textContent = motion.lostSince && all.length ? 'Itu bukan kamu 👀' : 'Kamu tidak terlihat 👀';
     if (state.mode === 'play' && motion.lostSince && now - motion.lostSince > 2000) { togglePause(); ui.pauseMsg.hidden = false; }
   } else ui.camStatus.textContent = !s.kneesVisible && !s.moving ? 'Lutut tak terlihat — melangkah yang mantap ya' : s.block ? 'perisai 🛡️' : s.crouch ? 'jongkok 🙇' : s.run ? 'lari! 🏃' : s.moving ? 'jalan 🚶' : s.raise ? 'tangan ke atas 🙌' : s.side > .3 ? 'geser kiri ⬅️' : s.side < -.3 ? 'geser kanan ➡️' : 'siap 🙂';
+  const hint = lightHint();
+  if (hint && (meter.level === 'dark' || state.mode !== 'play')) ui.camStatus.textContent = hint;
   return ev;
 }
 
@@ -759,7 +772,8 @@ function tickCalib(now) {
   const t = (now - calibStart) / 1000, n = Math.max(0, Math.ceil(3 - t));
   if (ui.calibCount.textContent !== String(n)) { ui.calibCount.textContent = n; if (good) sfx.tick(); }
   ui.calibBar.style.width = `${Math.min(100, t / 3 * 100)}%`;
-  ui.calibHint.textContent = !s.ok ? 'Berdiri di depan kamera ya.' : !s.kneesVisible ? (good ? 'Lutut tak terlihat — tidak apa-apa, melangkahlah yang mantap 👍' : 'Mundur sampai kepala sampai LUTUT terlihat 📏') : s.others ? 'Ada orang lain — kamera mengunci yang paling dekat 👍' : 'Mantap! Berdiri tegak & lihat ke layar 🙂';
+  const lh = lightHint();
+  ui.calibHint.textContent = (lh ? lh + ' ' : '') + (!s.ok ? 'Berdiri di depan kamera ya.' : !s.kneesVisible ? (good ? 'Lutut tak terlihat — tidak apa-apa, melangkahlah yang mantap 👍' : 'Mundur sampai kepala sampai LUTUT terlihat 📏') : s.others ? 'Ada orang lain — kamera mengunci yang paling dekat 👍' : 'Mantap! Berdiri tegak & lihat ke layar 🙂');
   if (t >= 3) {
     if (motion.finishCalibration()) { ui.calib.hidden = true; if (state.after === 'practice') beginPractice(); else beginGame(); }
     else { motion.startCalibration(); calibStart = now; }
@@ -1859,4 +1873,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-if (DEBUG) window.__game = { state, P, stats, ctl, motion, foes, dying, items, hero, camera, handlePose, spawnFoe, spawnPoint, shocks, shots, runes, killFoe, hurtFoe, planWave, beginPractice, startDrill, fire, rune, shockwave, beginGame, startWave, renderer, scene, keys, punch, superSlam, endTutorial, wardrobe, gameOver, applyLook, setSource: (s) => (ctl.source = s) };
+if (DEBUG) window.__game = { state, P, stats, ctl, motion, foes, dying, items, hero, camera, handlePose, spawnFoe, spawnPoint, shocks, shots, runes, killFoe, hurtFoe, planWave, beginPractice, startDrill, fire, rune, shockwave, beginGame, startWave, renderer, scene, keys, punch, superSlam, endTutorial, wardrobe, gameOver, applyLook, setSource: (s) => (ctl.source = s), get meter() { return meter; }, get poseSize() { return [poseW, poseH]; } };
